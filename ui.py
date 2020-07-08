@@ -230,7 +230,8 @@ def get_parser():
                                  'basic_swor',
                                  'mem_swor',
                                  'alt_swor',
-                                 'cp_swor'],
+                                 'cp_swor',
+                                 'diverse_decoder'],
                         help="Strategy for traversing the search space which "
                         "is spanned by the predictors.\n\n"
                         "* 'greedy': Greedy decoding (similar to beam=1)\n"
@@ -309,7 +310,13 @@ def get_parser():
                         "random sampling")
     group.add_argument('--temperature', default=1., type=float, metavar='N',
                        help='temperature for generation')
-    
+    group.add_argument('--string_kernel_n', default=3, type=int,
+                       help='Length of the subsequences to consider for the string kernel.')
+    group.add_argument('--string_kernel_decay', default=0.5, type=float,
+                       help='Decay factor for the string kernel. Lambda in original formula.')
+    group.add_argument('--string_kernel_weight', default=1.0, type=float,
+                       help='How much weight the similarity penalty (computed with the string '
+                            'kernel) should have. Used for diverse decoding.')
 
     ## Output options
     group = parser.add_argument_group('Output options')

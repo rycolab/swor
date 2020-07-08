@@ -4,7 +4,8 @@ import logging
 import os
 import sys
 from bisect import bisect_left 
-from functools import reduce  
+from functools import reduce
+from string_kernel_utils import normalized_substring_kernel_k
 
 import numpy as np
 from numpy import log, log1p, exp, expm1, inf, nan
@@ -341,6 +342,81 @@ def common_contains(obj, key):
         return key in obj
     else:
         return key < len(obj)
+
+
+# String Kernel
+def get_string_kernel_value_to_subtract(hypo_index, hypo_array, selected_indices, string_kernel_n, string_kernel_decay):
+    """Helper function for string_kernel_diversity.
+       Returns the value to subtract from the score of hypo_array[hypo_index] to obtain the augmented probability.
+
+        Args:
+            ``hypo_index`` (int):  Index of the hypothesis for which we want to compute the augmented probability
+            ``hypo_array`` (list): List of all hypotheses
+            ``selected_indices`` (list): List of the indices that have been selected already
+            ``string_kernel_n`` (int): Parameter 'n' for string kernel, denoting length of the subsequences to consider
+            ``string_kernel_decay`` (double): Parameter 'decay' for string kernel
+
+        Returns:
+            Value to subtract from the probability of the hypothesis hypo_array[hypo_index]
+        """
+    if len(selected_indices) == 0:
+        return 0
+    elif len(selected_indices) == 1:
+        return normalized_substring_kernel_k(hypo_array[hypo_index].trgt_sentence,
+                                             hypo_array[selected_indices[0]].trgt_sentence,
+                                             n=string_kernel_n, decay=string_kernel_decay)
+    else:
+        # build matrix and take determinant
+        indices_to_compare = selected_indices.copy()
+        indices_to_compare.append(hypo_index)
+        num_indices_to_compare = len(indices_to_compare)
+        matrix = np.zeros((num_indices_to_compare, num_indices_to_compare))
+        for i in range(num_indices_to_compare):
+            for j in range(num_indices_to_compare):
+                matrix[i][j] = normalized_substring_kernel_k(hypo_array[indices_to_compare[i]].trgt_sentence,
+                                                             hypo_array[indices_to_compare[j]].trgt_sentence,
+                                                             n=string_kernel_n, decay=string_kernel_decay)
+        return np.linalg.det(matrix)
+
+
+def string_kernel_diversity(arr, n, string_kernel_n, string_kernel_decay, string_kernel_weight):
+    """Get indices of the ``n`` hypotheses from ``arr`` with the maximum scores
+    after augmenting the scores with the string kernel diversity. The
+    parameter ``arr`` is a list of PartialHypothesis. The returned index set is
+    not guaranteed to be sorted.
+
+    Args:
+        arr (list):  List of PartialHypothesis objects
+        n  (int):  Number of values to retrieve
+        string_kernel_n (int):  n for subsequence kernel, denotes the length
+                                of the subsequences to consider
+        string_kernel_decay (float): decay factor for the string kernel
+        string_kernel_weight (float): how much weight the similarity penalty should have
+
+    Returns:
+        List of indices of the ``n`` best hypotheses in ``arr``,
+        considering the score and the diversity computed with the string kernel
+    """
+    if len(arr) <= n:
+        return range(len(arr))
+
+    # set with the selected indices
+    selected_indices = []
+
+    while len(selected_indices) < n:
+        augmented_probs = []
+        for i in range(len(arr)):
+            if i not in selected_indices:
+                value_to_subtract = get_string_kernel_value_to_subtract(i, arr, selected_indices, string_kernel_n,
+                                                                        string_kernel_decay)
+                augmented_probs.append(arr[i].score - (string_kernel_weight * value_to_subtract))
+            else:
+                # if index was already selected, give it negative infinity probability
+                augmented_probs.append(-np.infty)
+        selected_indices.append(np.argmax(augmented_probs))
+
+    # return the n indices with the best augmented score
+    return selected_indices
 
 
 # Miscellaneous

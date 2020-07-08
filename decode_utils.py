@@ -49,6 +49,7 @@ from decoding.dfs import DFSDecoder, \
                                    SimpleDFSDecoder, \
                                    SimpleLengthDFSDecoder
 from decoding.greedy import GreedyDecoder
+from decoding.diverse_decoding import DiverseDecoder
 from output import TextOutputHandler, \
                              NBestOutputHandler, \
                              NBestSeparateOutputHandler, \
@@ -206,6 +207,8 @@ def create_decoder():
             decoder = SworDecoder(args)
         elif args.decoder == "cp_swor":
             decoder = CPSworDecoder(args)
+        elif args.decoder == "diverse_decoder":
+            decoder = DiverseDecoder(args)
         else:
             logging.fatal("Decoder %s not available. Please double-check the "
                           "--decoder parameter." % args.decoder)
