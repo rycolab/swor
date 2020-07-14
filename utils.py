@@ -3,9 +3,9 @@ import operator
 import logging
 import os
 import sys
-from bisect import bisect_left 
+from bisect import bisect_left
 from functools import reduce
-from string_kernel_utils import normalized_substring_kernel_k
+from string_kernel_utils import get_string_kernel_value_to_subtract_compare_with_lodhi_recursive_normalized
 
 import numpy as np
 from numpy import log, log1p, exp, expm1, inf, nan
@@ -37,6 +37,13 @@ INF = inf
 
 
 EPS_P = 0.00001
+
+
+# used for computation of string kernel
+string_kernel_previous = {}
+string_kernel_current = {}
+# set TEST = True if string kernel should be tested
+TEST = False
 
 
 def switch_to_fairseq_indexing():
@@ -266,12 +273,12 @@ def log_softmax(x, temperature=1.):
     b = (~np.ma.masked_invalid(shift_x).mask).astype(int)
     return shift_x - logsumexp(shift_x, b=b)
 
-  
-def binary_search(a, x): 
-    i = bisect_left(a, x) 
-    if i != len(a) and a[i] == x: 
-        return i 
-    else: 
+
+def binary_search(a, x):
+    i = bisect_left(a, x)
+    if i != len(a) and a[i] == x:
+        return i
+    else:
         return -1
 
 def perplexity(arr):
@@ -345,8 +352,241 @@ def common_contains(obj, key):
 
 
 # String Kernel
-def get_string_kernel_value_to_subtract(hypo_index, hypo_array, selected_indices, string_kernel_n, string_kernel_decay):
-    """Helper function for string_kernel_diversity.
+
+# takes a dictionary and returns a new dictionary where the values are transposed
+def transpose_all_values(dictionary):
+    transposed_dict = {}
+    for key in dictionary.keys():
+        transposed_dict[key] = np.transpose(dictionary[key])
+    return transposed_dict
+
+
+# normalization as in this paper:
+# https://pdfs.semanticscholar.org/07f9/4059372818242a2d09a42580a827d2c77f73.pdf
+def normalization_for_dynamic_programming_approach(K, decay):
+    normalized_K = {}
+    for key in K.keys():
+        normalized_K[key] = K[key] / (decay ** (2*key))
+    return normalized_K
+
+
+# dynamic programming approach from this paper:
+# https://pdfs.semanticscholar.org/07f9/4059372818242a2d09a42580a827d2c77f73.pdf
+# optimized to reuse previous results
+def dynamic_programming_substring_kernel_k_efficient(s, t, p, decay):
+
+    global string_kernel_previous, string_kernel_current
+
+    if p < 1:
+        print("the string kernel is only defined for positive values")
+        exit(1)
+
+    if (str(s), str(t), p, decay) in string_kernel_current:
+        # result can be loaded from current time step
+        _, _, K = string_kernel_current[(str(s), str(t), p, decay)]
+        return K
+    elif (str(s), str(t), p, decay) in string_kernel_previous:
+        # result can be loaded from previous time step
+        # this can happen if s and t had already reached EOS in the previous time step
+        S, k_, K = string_kernel_previous[(str(s), str(t), p, decay)]
+        string_kernel_current[(str(s), str(t), p, decay)] = (S, k_, K)
+        return K
+    elif (str(t), str(s), p, decay) in string_kernel_current:
+        # symmetric result can be loaded from current time step (since K(s,t) == K(t,s))
+        S, k_, K = string_kernel_current[(str(t), str(s), p, decay)]
+        S_t = transpose_all_values(S)
+        k_t = transpose_all_values(k_)
+        string_kernel_current[(str(s), str(t), p, decay)] = (S_t, k_t, K)
+        return K
+
+    # K stores the kernel results for the substring lengths 1...n
+    K = {}
+
+    # k_ stores intermediate results
+    k_ = {}
+
+    # S stores intermediate results
+    S = {}
+
+    if len(s) < 3 and len(t) < 3:
+        # do not search for previous result
+
+        K[1] = 0
+        k_[1] = np.zeros((len(s)+1, len(t)+1))
+        for i in range(1, len(s) + 1):
+            for j in range(1, len(t) + 1):
+                if s[i - 1] == t[j - 1]:
+                    k_[1][i, j] = decay ** 2
+                    K[1] = K[1] + k_[1][i, j]
+
+        if p > 1:
+            for l in range(2, p + 1):
+                K[l] = 0
+                S[l] = np.zeros((len(s) + 1, len(t) + 1), dtype=np.double)
+                k_[l] = np.zeros((len(s) + 1, len(t) + 1))
+                for i in range(1, len(s) + 1):
+                    for j in range(1, len(t) + 1):
+                        S[l][i, j] = k_[l - 1][i, j] + decay * S[l][i - 1, j] + decay * S[l][i, j - 1] - (decay ** 2) * S[l][
+                            i - 1, j - 1]
+                        if s[i - 1] == t[j - 1]:
+                            k_[l][i, j] = (decay ** 2) * S[l][i - 1, j - 1]
+                            K[l] = K[l] + k_[l][i, j]
+
+            string_kernel_current[(str(s), str(t), p, decay)] = (S, k_, K)
+        else:
+            string_kernel_current[(str(s), str(t), p, decay)] = (None, k_, K)
+
+    else:
+        # can reuse results from previous time step
+
+        if len(s) == len(t):
+            previous_key = (str(s[:-1]), str(t[:-1]), p, decay)
+            if previous_key not in string_kernel_previous:
+                raise Exception("previous result not found in string_kernel_previous even though it should be there! "
+                                "previous_key: ", previous_key)
+
+            else:
+                previous_S, previous_k_, previous_K = string_kernel_previous[previous_key]
+
+                # load k_[1] and K[1] from previous result
+                k_[1] = np.zeros((len(s) + 1, len(t) + 1))
+                k_[1][:-1, :-1] = previous_k_[1]
+                K[1] = previous_K[1]
+
+                for i in range(1, len(s)):
+                    for j in [len(t)]:
+                        if s[i - 1] == t[j - 1]:
+                            k_[1][i, j] = decay ** 2
+                            K[1] = K[1] + k_[1][i, j]
+                for j in range(1, len(t) + 1):
+                    for i in [len(s)]:
+                        if s[i - 1] == t[j - 1]:
+                            k_[1][i, j] = decay ** 2
+                            K[1] = K[1] + k_[1][i, j]
+
+                for l in range(2, p+1):
+                    # load previous results
+                    K[l] = previous_K[l]
+                    S[l] = np.zeros((len(s)+1, len(t)+1), dtype=np.double)
+                    S[l][:-1, :-1] = previous_S[l]
+                    k_[l] = np.zeros((len(s)+1, len(t)+1))
+                    k_[l][:-1, :-1] = previous_k_[l]
+
+                    for i in range(1, len(s)):
+                        for j in [len(t)]:
+                            S[l][i, j] = k_[l-1][i, j] + decay * S[l][i-1, j] + decay * S[l][i, j-1] - (decay ** 2) * S[l][i-1, j-1]
+                            if s[i-1] == t[j-1]:
+                                k_[l][i, j] = (decay ** 2) * S[l][i-1, j-1]
+                                K[l] = K[l] + k_[l][i, j]
+                    for j in range(1, len(t) + 1):
+                        for i in [len(s)]:
+                            S[l][i, j] = k_[l - 1][i, j] + decay * S[l][i - 1, j] + decay * S[l][i, j - 1] \
+                                         - (decay ** 2) * S[l][i - 1, j - 1]
+                            if s[i - 1] == t[j - 1]:
+                                k_[l][i, j] = (decay ** 2) * S[l][i - 1, j - 1]
+                                K[l] = K[l] + k_[l][i, j]
+
+                string_kernel_current[(str(s), str(t), p, decay)] = (S, k_, K)
+
+        elif len(s) > len(t):
+
+            previous_key = (str(s[:-1]), str(t), p, decay)
+            if previous_key not in string_kernel_previous:
+                raise Exception("previous result not found in string_kernel_previous even though it should be there! "
+                                "previous_key: ", previous_key)
+
+            previous_S, previous_k_, previous_K = string_kernel_previous[previous_key]
+
+            # load k_[1] and K[1] from previous result
+            k_[1] = np.zeros((len(s) + 1, len(t) + 1))
+            k_[1][:-1, :] = previous_k_[1]
+            K[1] = previous_K[1]
+
+            for j in range(1, len(t) + 1):
+                for i in [len(s)]:
+                    if s[i - 1] == t[j - 1]:
+                        k_[1][i, j] = decay ** 2
+                        K[1] = K[1] + k_[1][i, j]
+
+            for l in range(2, p + 1):
+                # load previous results
+                K[l] = previous_K[l]
+                S[l] = np.zeros((len(s) + 1, len(t) + 1), dtype=np.double)
+                S[l][:-1, :] = previous_S[l]
+                k_[l] = np.zeros((len(s) + 1, len(t) + 1))
+                k_[l][:-1, :] = previous_k_[l]
+
+                for j in range(1, len(t) + 1):
+                    for i in [len(s)]:
+                        S[l][i, j] = k_[l - 1][i, j] + decay * S[l][i - 1, j] + decay * S[l][i, j - 1] \
+                                     - (decay ** 2) * S[l][i - 1, j - 1]
+                        if s[i - 1] == t[j - 1]:
+                            k_[l][i, j] = (decay ** 2) * S[l][i - 1, j - 1]
+                            K[l] = K[l] + k_[l][i, j]
+
+            string_kernel_current[(str(s), str(t), p, decay)] = (S, k_, K)
+
+        else:
+            # len(t) > len(s)
+            previous_key = (str(s), str(t[:-1]), p, decay)
+            if previous_key not in string_kernel_previous:
+                raise Exception("previous result not found in string_kernel_previous even though it should be there! "
+                                "previous_key: ", previous_key)
+
+            previous_S, previous_k_, previous_K = string_kernel_previous[previous_key]
+
+            # load k_[1] and K[1] from previous result
+            k_[1] = np.zeros((len(s) + 1, len(t) + 1))
+            k_[1][:, :-1] = previous_k_[1]
+            K[1] = previous_K[1]
+
+            for i in range(1, len(s) + 1):
+                for j in [len(t)]:
+                    if s[i - 1] == t[j - 1]:
+                        k_[1][i, j] = decay ** 2
+                        K[1] = K[1] + k_[1][i, j]
+
+            for l in range(2, p + 1):
+                # load previous results
+                K[l] = previous_K[l]
+                S[l] = np.zeros((len(s) + 1, len(t) + 1), dtype=np.double)
+                S[l][:, :-1] = previous_S[l]
+                k_[l] = np.zeros((len(s) + 1, len(t) + 1))
+                k_[l][:, :-1] = previous_k_[l]
+
+                for i in range(1, len(s) + 1):
+                    for j in [len(t)]:
+                        S[l][i, j] = k_[l - 1][i, j] + decay * S[l][i - 1, j] + decay * S[l][i, j - 1] - (decay ** 2) * \
+                                     S[l][i - 1, j - 1]
+                        if s[i - 1] == t[j - 1]:
+                            k_[l][i, j] = (decay ** 2) * S[l][i - 1, j - 1]
+                            K[l] = K[l] + k_[l][i, j]
+
+            string_kernel_current[(str(s), str(t), p, decay)] = (S, k_, K)
+
+    return K
+
+
+# normalization like in the Lodhi et al. paper: K_norm(s,t) = K(s,t) / (sqrt(K(s,s) * K(t,t)))
+def lodhi_normalization(kernel_values, s, t, p, decay):
+    kernel_values_ss = dynamic_programming_substring_kernel_k_efficient(s, s, p, decay)
+    kernel_values_tt = dynamic_programming_substring_kernel_k_efficient(t, t, p, decay)
+    results = {}
+    for i in range(1, p+1):
+        if kernel_values[i] == 0:
+            if s == t:
+                results[i] = 1
+            else:
+                results[i] = 0
+        else:
+            results[i] = kernel_values[i] / (np.sqrt(kernel_values_ss[i] * kernel_values_tt[i]))
+    return results
+
+
+def get_string_kernel_value_to_subtract_test(hypo_index, hypo_array, selected_indices, string_kernel_n, string_kernel_decay):
+    """Used for testing the string kernel.
+       Helper function for string_kernel_diversity. Uses dynamic_programming_substring_kernel_k_efficient, normalizes
+       with Lodhi's normalization and uses the result of substring length string_kernel_n.
        Returns the value to subtract from the score of hypo_array[hypo_index] to obtain the augmented probability.
 
         Args:
@@ -362,9 +602,12 @@ def get_string_kernel_value_to_subtract(hypo_index, hypo_array, selected_indices
     if len(selected_indices) == 0:
         return 0
     elif len(selected_indices) == 1:
-        return normalized_substring_kernel_k(hypo_array[hypo_index].trgt_sentence,
-                                             hypo_array[selected_indices[0]].trgt_sentence,
-                                             n=string_kernel_n, decay=string_kernel_decay)
+        kernel_values = dynamic_programming_substring_kernel_k_efficient(hypo_array[hypo_index].trgt_sentence,
+                                                                hypo_array[selected_indices[0]].trgt_sentence,
+                                                                p=string_kernel_n, decay=string_kernel_decay)
+        return lodhi_normalization(kernel_values, hypo_array[hypo_index].trgt_sentence,
+                                   hypo_array[selected_indices[0]].trgt_sentence,
+                                   p=string_kernel_n, decay=string_kernel_decay)[string_kernel_n]
     else:
         # build matrix and take determinant
         indices_to_compare = selected_indices.copy()
@@ -373,13 +616,56 @@ def get_string_kernel_value_to_subtract(hypo_index, hypo_array, selected_indices
         matrix = np.zeros((num_indices_to_compare, num_indices_to_compare))
         for i in range(num_indices_to_compare):
             for j in range(num_indices_to_compare):
-                matrix[i][j] = normalized_substring_kernel_k(hypo_array[indices_to_compare[i]].trgt_sentence,
-                                                             hypo_array[indices_to_compare[j]].trgt_sentence,
-                                                             n=string_kernel_n, decay=string_kernel_decay)
+                kernel_values = dynamic_programming_substring_kernel_k_efficient(hypo_array[indices_to_compare[i]].trgt_sentence,
+                                                                                hypo_array[indices_to_compare[j]].trgt_sentence,
+                                                                                p=string_kernel_n, decay=string_kernel_decay)
+                matrix[i][j] = lodhi_normalization(kernel_values, hypo_array[indices_to_compare[i]].trgt_sentence,
+                                                   hypo_array[indices_to_compare[j]].trgt_sentence, p=string_kernel_n,
+                                                   decay=string_kernel_decay)[string_kernel_n]
         return np.linalg.det(matrix)
 
 
-def string_kernel_diversity(arr, n, string_kernel_n, string_kernel_decay, string_kernel_weight):
+def get_string_kernel_value_to_subtract(hypo_index, hypo_array, selected_indices, string_kernel_n, string_kernel_decay):
+    """Helper function for string_kernel_diversity. Uses dynamic programmming approach.
+       Returns the value to subtract from the score of hypo_array[hypo_index] to obtain the augmented probability.
+
+        Args:
+            ``hypo_index`` (int):  Index of the hypothesis for which we want to compute the augmented probability
+            ``hypo_array`` (list): List of all hypotheses
+            ``selected_indices`` (list): List of the indices that have been selected already
+            ``string_kernel_n`` (int): Parameter 'n' for string kernel, denoting length of the subsequences to consider
+            ``string_kernel_decay`` (double): Parameter 'decay' for string kernel
+
+        Returns:
+            Value to subtract from the probability of the hypothesis hypo_array[hypo_index]
+        """
+    if len(selected_indices) == 0:
+        return 0
+    elif len(selected_indices) == 1:
+        kernel_values = dynamic_programming_substring_kernel_k_efficient(hypo_array[hypo_index].trgt_sentence,
+                                                                hypo_array[selected_indices[0]].trgt_sentence,
+                                                                p=string_kernel_n, decay=string_kernel_decay)
+        return np.mean(list(lodhi_normalization(kernel_values, hypo_array[hypo_index].trgt_sentence,
+                                                hypo_array[selected_indices[0]].trgt_sentence,
+                                                p=string_kernel_n, decay=string_kernel_decay).values()))
+    else:
+        # build matrix and take determinant
+        indices_to_compare = selected_indices.copy()
+        indices_to_compare.append(hypo_index)
+        num_indices_to_compare = len(indices_to_compare)
+        matrix = np.zeros((num_indices_to_compare, num_indices_to_compare))
+        for i in range(num_indices_to_compare):
+            for j in range(num_indices_to_compare):
+                kernel_values = dynamic_programming_substring_kernel_k_efficient(hypo_array[indices_to_compare[i]].trgt_sentence,
+                                                                                hypo_array[indices_to_compare[j]].trgt_sentence,
+                                                                                p=string_kernel_n, decay=string_kernel_decay)
+                matrix[i][j] = np.mean(list(lodhi_normalization(kernel_values, hypo_array[indices_to_compare[i]].trgt_sentence,
+                                                   hypo_array[indices_to_compare[j]].trgt_sentence, p=string_kernel_n,
+                                                   decay=string_kernel_decay).values()))
+        return np.linalg.det(matrix)
+
+
+def select_with_string_kernel_diversity(arr, n, string_kernel_n, string_kernel_decay, string_kernel_weight):
     """Get indices of the ``n`` hypotheses from ``arr`` with the maximum scores
     after augmenting the scores with the string kernel diversity. The
     parameter ``arr`` is a list of PartialHypothesis. The returned index set is
@@ -403,12 +689,31 @@ def string_kernel_diversity(arr, n, string_kernel_n, string_kernel_decay, string
     # set with the selected indices
     selected_indices = []
 
+    # update string kernel result dicts
+    global string_kernel_previous, string_kernel_current
+    string_kernel_previous = string_kernel_current
+    string_kernel_current = {}
+
     while len(selected_indices) < n:
         augmented_probs = []
         for i in range(len(arr)):
             if i not in selected_indices:
+
                 value_to_subtract = get_string_kernel_value_to_subtract(i, arr, selected_indices, string_kernel_n,
                                                                         string_kernel_decay)
+                if TEST:
+                    lodhi_test_val = get_string_kernel_value_to_subtract_compare_with_lodhi_recursive_normalized(i, arr,
+                                                                                                    selected_indices,
+                                                                                                    string_kernel_n,
+                                                                                                    string_kernel_decay)
+                    dynamic_test_val = get_string_kernel_value_to_subtract_test(i, arr, selected_indices,
+                                                                                string_kernel_n, string_kernel_decay)
+                    if abs(dynamic_test_val - lodhi_test_val) > 0.00000000001:
+                        print("")
+                        print(lodhi_test_val)
+                        print(dynamic_test_val)
+                        print("Difference: ", abs(dynamic_test_val-lodhi_test_val))
+
                 augmented_probs.append(arr[i].score - (string_kernel_weight * value_to_subtract))
             else:
                 # if index was already selected, give it negative infinity probability
@@ -464,7 +769,7 @@ def distinct_ngrams(hypos, n):
         all_ngrams = ngrams(h, n)
         total_ngrams += len(all_ngrams)
         distinct.extend(all_ngrams)
-    
+
     if len(distinct) == 0:
         return 0
     return float(len(set(distinct)))/len(distinct)
@@ -496,7 +801,7 @@ class Observer(object):
     """Super class for classes which observe (GoF design patten) other
     classes.
     """
-    
+
     @abstractmethod
     def notify(self, message, message_type = MESSAGE_TYPE_DEFAULT):
         """Get a notification from an observed object.
@@ -507,15 +812,15 @@ class Observer(object):
                                 ``MESSAGE_TYPE_*`` variables
         """
         raise NotImplementedError
-    
+
 
 class Observable(object):
     """For the GoF design pattern observer """
-    
+
     def __init__(self):
         """Initializes the list of observers with an empty list """
         self.observers = []
-    
+
     def add_observer(self, observer):
         """Add a new observer which is notified when this class fires
         a notification
@@ -524,7 +829,7 @@ class Observable(object):
             observer (Observer): the observer class to add
         """
         self.observers.append(observer)
-    
+
     def notify_observers(self, message, message_type = MESSAGE_TYPE_DEFAULT):
         """Sends the given message to all registered observers.
         
@@ -555,7 +860,7 @@ class MinMaxHeap(object):
 
     def __list__(self):
         return self.a
-        
+
     def __next__(self):
         try:
             return self.popmin()
@@ -604,7 +909,7 @@ class MinMaxHeap(object):
         Remove and return maximum element. Complexity: O(log(n))
         """
         replacemax(self.a, self.size, val)
-        
+
 
 
 def level(i):

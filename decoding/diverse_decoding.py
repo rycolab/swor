@@ -71,8 +71,8 @@ class DiverseDecoder(Decoder):
 
     def _get_next_hypos(self, all_hypos, all_scores):
         """Get hypos for the next iteration. """
-        inds = utils.string_kernel_diversity(all_hypos, self.beam_size, self.string_kernel_n, self.string_kernel_decay,
-                                             self.string_kernel_weight)
+        inds = utils.select_with_string_kernel_diversity(all_hypos, self.beam_size, self.string_kernel_n,
+                                                         self.string_kernel_decay, self.string_kernel_weight)
         return [all_hypos[ind] for ind in inds]
 
     def _get_initial_hypos(self):

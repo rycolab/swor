@@ -134,7 +134,125 @@ def test_substring_kernel_k(s, t, n, decay):
 def normalized_substring_kernel_k(s, t, n, decay):
     kernel_value = substring_kernel_k(s, t, n, decay)
     if kernel_value == 0:
-        return 0
+        if s == t:
+            return 1
+        else:
+            return 0
     else:
         normalization_term = np.sqrt(substring_kernel_k(s, s, n, decay) * substring_kernel_k(t, t, n, decay))
         return kernel_value / normalization_term
+
+
+# dynamic programming approach from this paper:
+# https://pdfs.semanticscholar.org/07f9/4059372818242a2d09a42580a827d2c77f73.pdf
+def dynamic_programming_substring_kernel_k(s, t, p, decay):
+
+    if p < 1:
+        print("the string kernel is only defined for positive values")
+        exit(1)
+
+    # K stores the kernel results for the substring lengths 1...n
+    K = {}
+
+    # k_ stores intermediate results
+    k_ = {1: np.zeros((len(s)+1, len(t)+1))}
+
+    K[1] = 0
+    for i in range(1, len(s)+1):
+        for j in range(1, len(t)+1):
+            if s[i-1] == t[j-1]:
+                k_[1][i, j] = decay ** 2
+                K[1] = K[1] + k_[1][i, j]
+    #K[1] = K[1] / (decay ** 2)  # normalize
+
+    if p > 1:
+        for l in range(2, p+1):
+            K[l] = 0
+            S = np.zeros((len(s)+1, len(t)+1), dtype=np.double)
+            k_[l] = np.zeros((len(s)+1, len(t)+1))
+            for i in range(1, len(s)+1):
+                for j in range(1, len(t)+1):
+                    S[i, j] = k_[l-1][i, j] + decay * S[i-1, j] + decay * S[i, j-1] - (decay ** 2) * S[i-1, j-1]
+                    if s[i-1] == t[j-1]:
+                        k_[l][i, j] = (decay ** 2) * S[i-1, j-1]
+                        K[l] = K[l] + k_[l][i, j]
+            #K[l] = K[l] / (decay ** (2*l))  # normalize
+
+    return K
+
+
+###############################################################################################
+# This part can be used for testing
+###############################################################################################
+
+def get_string_kernel_value_to_subtract_compare_with_dynamic_unnormalized(hypo_index, hypo_array, selected_indices,
+                                                                          string_kernel_n, string_kernel_decay):
+    """Helper function for string_kernel_diversity. Uses dynamic programming approach without normalization.
+       Returns the value to subtract from the score of hypo_array[hypo_index] to obtain the augmented probability.
+
+        Args:
+            ``hypo_index`` (int):  Index of the hypothesis for which we want to compute the augmented probability
+            ``hypo_array`` (list): List of all hypotheses
+            ``selected_indices`` (list): List of the indices that have been selected already
+            ``string_kernel_n`` (int): Parameter 'n' for string kernel, denoting length of the subsequences to consider
+            ``string_kernel_decay`` (double): Parameter 'decay' for string kernel
+
+        Returns:
+            Value to subtract from the probability of the hypothesis hypo_array[hypo_index]
+        """
+    if len(selected_indices) == 0:
+        return 0
+    elif len(selected_indices) == 1:
+        return dynamic_programming_substring_kernel_k(hypo_array[hypo_index].trgt_sentence,
+                                                      hypo_array[selected_indices[0]].trgt_sentence,
+                                                      p=string_kernel_n, decay=string_kernel_decay)[string_kernel_n]
+    else:
+        # build matrix and take determinant
+        indices_to_compare = selected_indices.copy()
+        indices_to_compare.append(hypo_index)
+        num_indices_to_compare = len(indices_to_compare)
+        matrix = np.zeros((num_indices_to_compare, num_indices_to_compare))
+        for i in range(num_indices_to_compare):
+            for j in range(num_indices_to_compare):
+                matrix[i][j] = dynamic_programming_substring_kernel_k(hypo_array[indices_to_compare[i]].trgt_sentence,
+                                                                      hypo_array[indices_to_compare[j]].trgt_sentence,
+                                                                      p=string_kernel_n, decay=string_kernel_decay)[string_kernel_n]
+        return np.linalg.det(matrix)
+
+
+def get_string_kernel_value_to_subtract_compare_with_lodhi_recursive_normalized(hypo_index, hypo_array,
+                                                                                selected_indices, string_kernel_n,
+                                                                                string_kernel_decay):
+    """Helper function for string_kernel_diversity. Uses Lodhi's recursive approach with Lodhi normalization.
+        Returns the value to subtract from the score of hypo_array[hypo_index] to obtain the augmented probability.
+
+        Args:
+            ``hypo_index`` (int):  Index of the hypothesis for which we want to compute the augmented probability
+            ``hypo_array`` (list): List of all hypotheses
+            ``selected_indices`` (list): List of the indices that have been selected already
+            ``string_kernel_n`` (int): Parameter 'n' for string kernel, denoting length of the subsequences to consider
+            ``string_kernel_decay`` (double): Parameter 'decay' for string kernel
+
+        Returns:
+            Value to subtract from the probability of the hypothesis hypo_array[hypo_index]
+        """
+    if len(selected_indices) == 0:
+        return 0
+    elif len(selected_indices) == 1:
+        return normalized_substring_kernel_k(hypo_array[hypo_index].trgt_sentence,
+                                                 hypo_array[selected_indices[0]].trgt_sentence,
+                                                 n=string_kernel_n, decay=string_kernel_decay)
+    else:
+        # build matrix and take determinant
+        indices_to_compare = selected_indices.copy()
+        indices_to_compare.append(hypo_index)
+        num_indices_to_compare = len(indices_to_compare)
+        matrix = np.zeros((num_indices_to_compare, num_indices_to_compare))
+        for i in range(num_indices_to_compare):
+            for j in range(num_indices_to_compare):
+                matrix[i][j] = normalized_substring_kernel_k(hypo_array[indices_to_compare[i]].trgt_sentence,
+                                                             hypo_array[indices_to_compare[j]].trgt_sentence,
+                                                             n=string_kernel_n, decay=string_kernel_decay)
+        return np.linalg.det(matrix)
+
+
