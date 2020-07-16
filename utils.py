@@ -658,6 +658,7 @@ def get_string_kernel_value_to_subtract(hypo_index, hypo_array, selected_indices
                 matrix[i][j] = np.mean(list(lodhi_normalization(kernel_values, hypo_array[indices_to_compare[i]].trgt_sentence,
                                                    hypo_array[indices_to_compare[j]].trgt_sentence, p=string_kernel_n,
                                                    decay=string_kernel_decay).values()))
+        
         return np.linalg.det(matrix)
 
 
@@ -695,8 +696,9 @@ def select_with_string_kernel_diversity(arr, n, string_kernel_n, string_kernel_d
         for i in range(len(arr)):
             if i not in selected_indices:
 
-                value_to_subtract = get_string_kernel_value_to_subtract(i, arr, selected_indices, string_kernel_n,
-                                                                        string_kernel_decay)
+                diversity_penalty = string_kernel_weight * get_string_kernel_value_to_subtract(i, arr, selected_indices, 
+                                                                                                string_kernel_n,
+                                                                                                string_kernel_decay) 
                 if TEST:
                     lodhi_test_val = get_string_kernel_value_to_subtract_compare_with_lodhi_recursive_normalized(i, arr,
                                                                                                     selected_indices,
@@ -710,12 +712,11 @@ def select_with_string_kernel_diversity(arr, n, string_kernel_n, string_kernel_d
                         print(dynamic_test_val)
                         print("Difference: ", abs(dynamic_test_val-lodhi_test_val))
 
-                augmented_probs.append(arr[i].score - (string_kernel_weight * value_to_subtract))
+                augmented_probs.append(arr[i].score - np.log(diversity_penalty, where=diversity_penalty!=0))
             else:
                 # if index was already selected, give it negative infinity probability
                 augmented_probs.append(-np.infty)
         selected_indices.append(np.argmax(augmented_probs))
-
     # return the n indices with the best augmented score
     return selected_indices
 
