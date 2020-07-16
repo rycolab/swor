@@ -54,6 +54,7 @@ class BeamDecoder(Decoder):
         self.string_kernel_decay = decoder_args.string_kernel_decay
         self.string_kernel_weight = decoder_args.string_kernel_weight
         self.diverse_decoding = (self.string_kernel_weight > 0.)
+        self.diverse_method = decoder_args.diverse_prob_method
         if self.diverse_decoding and decoder_args.early_stopping:
             logging.warn("Early stopping enabled with diverse decoding. full "
                         "diverse set may not be returned")
@@ -73,7 +74,8 @@ class BeamDecoder(Decoder):
         """Get hypos for the next iteration. """
         if self.diverse_decoding:
             inds = utils.select_with_string_kernel_diversity(all_hypos, self.beam_size, self.string_kernel_n,
-                                                         self.string_kernel_decay, self.string_kernel_weight)
+                                                         self.string_kernel_decay, self.string_kernel_weight,
+                                                         prob_method=self.diverse_method)
         else:
             inds = utils.argmax_n(all_scores, self.beam_size)
         return [all_hypos[ind] for ind in inds]

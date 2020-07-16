@@ -618,10 +618,11 @@ def get_string_kernel_value_to_subtract_test(hypo_index, hypo_array, selected_in
                 matrix[i][j] = lodhi_normalization(kernel_values, hypo_array[indices_to_compare[i]].trgt_sentence,
                                                    hypo_array[indices_to_compare[j]].trgt_sentence, p=string_kernel_n,
                                                    decay=string_kernel_decay)[string_kernel_n]
+                
         return np.linalg.det(matrix)
 
 
-def get_string_kernel_value_to_subtract(hypo_index, hypo_array, selected_indices, string_kernel_n, string_kernel_decay):
+def get_string_kernel_value_to_subtract(hypo_index, hypo_array, selected_indices, string_kernel_n, string_kernel_decay, normalize=True):
     """Helper function for string_kernel_diversity. Uses dynamic programmming approach.
        Returns the value to subtract from the score of hypo_array[hypo_index] to obtain the augmented probability.
 
@@ -641,9 +642,12 @@ def get_string_kernel_value_to_subtract(hypo_index, hypo_array, selected_indices
         kernel_values = dynamic_programming_substring_kernel_k_efficient(hypo_array[hypo_index].trgt_sentence,
                                                                 hypo_array[selected_indices[0]].trgt_sentence,
                                                                 p=string_kernel_n, decay=string_kernel_decay)
-        return np.mean(list(lodhi_normalization(kernel_values, hypo_array[hypo_index].trgt_sentence,
+        if normalize:
+            kernel_values = lodhi_normalization(kernel_values, hypo_array[hypo_index].trgt_sentence,
                                                 hypo_array[selected_indices[0]].trgt_sentence,
-                                                p=string_kernel_n, decay=string_kernel_decay).values()))
+                                                p=string_kernel_n, decay=string_kernel_decay)
+        
+        return np.mean(list(kernel_values.values()))
     else:
         # build matrix and take determinant
         indices_to_compare = selected_indices.copy()
@@ -651,18 +655,21 @@ def get_string_kernel_value_to_subtract(hypo_index, hypo_array, selected_indices
         num_indices_to_compare = len(indices_to_compare)
         matrix = np.zeros((num_indices_to_compare, num_indices_to_compare))
         for i in range(num_indices_to_compare):
-            for j in range(num_indices_to_compare):
+            for j in range( num_indices_to_compare):
                 kernel_values = dynamic_programming_substring_kernel_k_efficient(hypo_array[indices_to_compare[i]].trgt_sentence,
                                                                                 hypo_array[indices_to_compare[j]].trgt_sentence,
                                                                                 p=string_kernel_n, decay=string_kernel_decay)
-                matrix[i][j] = np.mean(list(lodhi_normalization(kernel_values, hypo_array[indices_to_compare[i]].trgt_sentence,
+            if normalize:
+                kernel_values = lodhi_normalization(kernel_values, hypo_array[indices_to_compare[i]].trgt_sentence,
                                                    hypo_array[indices_to_compare[j]].trgt_sentence, p=string_kernel_n,
-                                                   decay=string_kernel_decay).values()))
-        
+                                                   decay=string_kernel_decay)
+
+            matrix[i][j] = np.mean(list(kernel_values.values()))
+                   
         return np.linalg.det(matrix)
 
 
-def select_with_string_kernel_diversity(arr, n, string_kernel_n, string_kernel_decay, string_kernel_weight):
+def select_with_string_kernel_diversity(arr, n, string_kernel_n, string_kernel_decay, string_kernel_weight, prob_method=False):
     """Get indices of the ``n`` hypotheses from ``arr`` with the maximum scores
     after augmenting the scores with the string kernel diversity. The
     parameter ``arr`` is a list of PartialHypothesis. The returned index set is
@@ -699,7 +706,6 @@ def select_with_string_kernel_diversity(arr, n, string_kernel_n, string_kernel_d
                 similarity_score = get_string_kernel_value_to_subtract(i, arr, selected_indices, 
                                                                         string_kernel_n,
                                                                         string_kernel_decay) 
-                diversity_penalty = string_kernel_weight * np.log(similarity_score, where=similarity_score!=0)
                 if TEST:
                     lodhi_test_val = get_string_kernel_value_to_subtract_compare_with_lodhi_recursive_normalized(i, arr,
                                                                                                     selected_indices,
@@ -713,7 +719,12 @@ def select_with_string_kernel_diversity(arr, n, string_kernel_n, string_kernel_d
                         print(dynamic_test_val)
                         print("Difference: ", abs(dynamic_test_val-lodhi_test_val))
 
-                augmented_probs.append(arr[i].score - diversity_penalty)
+                if prob_method:
+                    kernel_prob = string_kernel_weight*(1. - similarity_score)
+                    hypotheses_score = log_add(arr[i].score/len(arr[i]), np.log(kernel_prob, where=kernel_prob!=0)) 
+                else:
+                    hypotheses_score = arr[i].score - string_kernel_weight * similarity_score
+                augmented_probs.append(hypotheses_score)
             else:
                 # if index was already selected, give it negative infinity probability
                 augmented_probs.append(-np.infty)

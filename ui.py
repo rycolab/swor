@@ -309,6 +309,8 @@ def get_parser():
     group.add_argument('--string_kernel_weight', default=0., type=float,
                        help='How much weight the similarity penalty (computed with the string '
                             'kernel) should have. Used for diverse decoding.')
+    group.add_argument("--diverse_prob_method", default=False, action="store_true",
+                       help="Use probability method for diverse decoding")
 
     ## Output options
     group = parser.add_argument_group('Output options')

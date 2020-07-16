@@ -490,8 +490,8 @@ def do_decode(decoder,
 
     logging.info("Decoding finished. Time: %.2f" % (time.time() - start_time))
     if decoder.nbest > 1:
-        print(diversity_metrics)
-    print("Total not full:", str(not_full))
+        logging.info("Average n-gram diversity: %.3f" % (sum(diversity_metrics)/len(diversity_metrics)))
+    #logging.info("Total not full:", str(not_full))
     try:
         for output_handler in output_handlers:
             if output_handler == text_output_handler:
