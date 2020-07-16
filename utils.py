@@ -696,9 +696,10 @@ def select_with_string_kernel_diversity(arr, n, string_kernel_n, string_kernel_d
         for i in range(len(arr)):
             if i not in selected_indices:
 
-                diversity_penalty = string_kernel_weight * get_string_kernel_value_to_subtract(i, arr, selected_indices, 
-                                                                                                string_kernel_n,
-                                                                                                string_kernel_decay) 
+                similarity_score = get_string_kernel_value_to_subtract(i, arr, selected_indices, 
+                                                                        string_kernel_n,
+                                                                        string_kernel_decay) 
+                diversity_penalty = string_kernel_weight * np.log(similarity_score, where=similarity_score!=0)
                 if TEST:
                     lodhi_test_val = get_string_kernel_value_to_subtract_compare_with_lodhi_recursive_normalized(i, arr,
                                                                                                     selected_indices,
@@ -712,7 +713,7 @@ def select_with_string_kernel_diversity(arr, n, string_kernel_n, string_kernel_d
                         print(dynamic_test_val)
                         print("Difference: ", abs(dynamic_test_val-lodhi_test_val))
 
-                augmented_probs.append(arr[i].score - np.log(diversity_penalty, where=diversity_penalty!=0))
+                augmented_probs.append(arr[i].score - diversity_penalty)
             else:
                 # if index was already selected, give it negative infinity probability
                 augmented_probs.append(-np.infty)

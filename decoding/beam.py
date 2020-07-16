@@ -42,18 +42,21 @@ class BeamDecoder(Decoder):
                                    from the configuration API.
         """
         super(BeamDecoder, self).__init__(decoder_args)
-        self.diversity_factor = decoder_args.decoder_diversity_factor
-        self.diverse_decoding = (self.diversity_factor > 0.0)
-        if self.diversity_factor > 0.0:
-            logging.fatal("Diversity promoting beam search is not implemented "
-                          "yet")
         self.nbest = max(1, decoder_args.nbest)
         self.beam_size = decoder_args.beam if not self.gumbel else self.nbest
+        self.sub_beam_size = decoder_args.sub_beam if decoder_args.sub_beam > 0 else self.beam_size 
         if decoder_args.early_stopping:
             self.stop_criterion = self._best_eos 
         else:
             self.stop_criterion = self._all_eos
-        self.reward = None  
+
+        self.string_kernel_n = decoder_args.string_kernel_n
+        self.string_kernel_decay = decoder_args.string_kernel_decay
+        self.string_kernel_weight = decoder_args.string_kernel_weight
+        self.diverse_decoding = (self.string_kernel_weight > 0.)
+        if self.diverse_decoding and decoder_args.early_stopping:
+            logging.warn("Early stopping enabled with diverse decoding. full "
+                        "diverse set may not be returned")
     
     def _best_eos(self, hypos):
         """Returns true if the best hypothesis ends with </S>"""
@@ -68,8 +71,11 @@ class BeamDecoder(Decoder):
 
     def _get_next_hypos(self, all_hypos, all_scores):
         """Get hypos for the next iteration. """
-
-        inds = utils.argmax_n(all_scores, self.beam_size)
+        if self.diverse_decoding:
+            inds = utils.select_with_string_kernel_diversity(all_hypos, self.beam_size, self.string_kernel_n,
+                                                         self.string_kernel_decay, self.string_kernel_weight)
+        else:
+            inds = utils.argmax_n(all_scores, self.beam_size)
         return [all_hypos[ind] for ind in inds]
     
     def _get_initial_hypos(self):
@@ -83,8 +89,6 @@ class BeamDecoder(Decoder):
         self.initialize_predictors(src_sentence)
         hypos = self._get_initial_hypos()
         it = 0
-        if self.reward:
-            self.l = len(src_sentence)
         while not self.stop_criterion(hypos):
             if it > self.max_len: # prevent infinite loops
                 break
@@ -96,7 +100,7 @@ class BeamDecoder(Decoder):
                     next_hypos.append(hypo)
                     next_scores.append(self.get_adjusted_score(hypo))
                     continue 
-                for next_hypo in self._expand_hypo(hypo, self.beam_size):
+                for next_hypo in self._expand_hypo(hypo, self.sub_beam_size):
                     next_hypos.append(next_hypo)
                     next_scores.append(self.get_adjusted_score(next_hypo))
             hypos = self._get_next_hypos(next_hypos, next_scores)

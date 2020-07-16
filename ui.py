@@ -230,8 +230,7 @@ def get_parser():
                                  'basic_swor',
                                  'mem_swor',
                                  'alt_swor',
-                                 'cp_swor',
-                                 'diverse_decoder'],
+                                 'cp_swor'],
                         help="Strategy for traversing the search space which "
                         "is spanned by the predictors.\n\n"
                         "* 'greedy': Greedy decoding (similar to beam=1)\n"
@@ -255,6 +254,8 @@ def get_parser():
                         help="Size of beam. Only used if --decoder is set to "
                         "'beam' or 'astar'. For 'astar' it limits the capacity"
                         " of the queue. Use --beam 0 for unlimited capacity.")
+    group.add_argument("--sub_beam", default=0, type=int,
+                        help="Size of sub beam for expanding hypotheses.")
     group.add_argument("--allow_unk_in_output", default=True, type='bool',
                         help="If false, remove all UNKs in the final "
                         "posteriors. Predictor distributions can still "
@@ -287,15 +288,6 @@ def get_parser():
                         "score. DO NOT USE early stopping in combination with "
                         "the dfs or restarting decoder when your predictors "
                         "can produce positive scores!")
-    group.add_argument("--decoder_diversity_factor", default=-1.0, type=float,
-                       help="If this is greater than zero, promote diversity "
-                       "between active hypotheses during decoding. The exact "
-                       "way of doing this depends on --decoder:\n"
-                       "* The 'beam' decoder roughly follows the approach in "
-                       "Li and Jurafsky, 2016\n"
-                       "* The 'bucket' decoder reorders the hypotheses in a "
-                       "bucket by penalizing hypotheses with the number of "
-                       "expanded hypotheses from the same parent.")
     group.add_argument("--simplelendfs_lower_bounds_file", default="",
                         help="Path to a file with length dependent lower "
                         "lower bounds for the simplelendfs decoder. Each line "
@@ -314,7 +306,7 @@ def get_parser():
                        help='Length of the subsequences to consider for the string kernel.')
     group.add_argument('--string_kernel_decay', default=0.5, type=float,
                        help='Decay factor for the string kernel. Lambda in original formula.')
-    group.add_argument('--string_kernel_weight', default=1.0, type=float,
+    group.add_argument('--string_kernel_weight', default=0., type=float,
                        help='How much weight the similarity penalty (computed with the string '
                             'kernel) should have. Used for diverse decoding.')
 
