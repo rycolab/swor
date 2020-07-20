@@ -669,7 +669,7 @@ def get_string_kernel_value_to_subtract(hypo_index, hypo_array, selected_indices
         return np.linalg.det(matrix)
 
 
-def select_with_string_kernel_diversity(arr, n, string_kernel_n, string_kernel_decay, string_kernel_weight, prob_method=False):
+def select_with_string_kernel_diversity(arr, n, string_kernel_n, string_kernel_decay, string_kernel_weight, method="original"):
     """Get indices of the ``n`` hypotheses from ``arr`` with the maximum scores
     after augmenting the scores with the string kernel diversity. The
     parameter ``arr`` is a list of PartialHypothesis. The returned index set is
@@ -719,9 +719,11 @@ def select_with_string_kernel_diversity(arr, n, string_kernel_n, string_kernel_d
                         print(dynamic_test_val)
                         print("Difference: ", abs(dynamic_test_val-lodhi_test_val))
 
-                if prob_method:
+                if method == "prob":
                     kernel_prob = string_kernel_weight*(1. - similarity_score)
                     hypotheses_score = log_add(arr[i].score/len(arr[i]), np.log(kernel_prob, where=kernel_prob!=0)) 
+                elif method == "log":
+                    hypotheses_score = arr[i].score - string_kernel_weight * np.log(similarity_score, where=similarity_score!=0)
                 else:
                     hypotheses_score = arr[i].score - string_kernel_weight * similarity_score
                 augmented_probs.append(hypotheses_score)

@@ -311,6 +311,8 @@ def get_parser():
                             'kernel) should have. Used for diverse decoding.')
     group.add_argument("--diverse_prob_method", default=False, action="store_true",
                        help="Use probability method for diverse decoding")
+    group.add_argument("--diverse_log_method", default=False, action="store_true",
+                       help="Use log penalty for diverse decoding")
 
     ## Output options
     group = parser.add_argument_group('Output options')
