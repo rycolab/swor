@@ -677,15 +677,15 @@ def get_string_kernel_value_to_subtract(hypo_index, hypo_array, selected_indices
                                                                                 p=string_kernel_n, decay=string_kernel_decay,
                                                                                 string_kernel_previous=string_kernel_previous,
                                                                                 string_kernel_current=string_kernel_current)
-            if normalize:
-                kernel_values = lodhi_normalization(kernel_values=kernel_values,
-                                                    s=hypo_array[indices_to_compare[i]].trgt_sentence,
-                                                    t=hypo_array[indices_to_compare[j]].trgt_sentence,
-                                                    p=string_kernel_n, decay=string_kernel_decay,
-                                                    string_kernel_previous=string_kernel_previous,
-                                                    string_kernel_current=string_kernel_current)
+                if normalize:
+                    kernel_values = lodhi_normalization(kernel_values=kernel_values,
+                                                        s=hypo_array[indices_to_compare[i]].trgt_sentence,
+                                                        t=hypo_array[indices_to_compare[j]].trgt_sentence,
+                                                        p=string_kernel_n, decay=string_kernel_decay,
+                                                        string_kernel_previous=string_kernel_previous,
+                                                        string_kernel_current=string_kernel_current)
 
-            matrix[i][j] = np.mean(list(kernel_values.values()))
+                matrix[i][j] = np.mean(list(kernel_values.values()))
                    
         return np.linalg.det(matrix)
 
