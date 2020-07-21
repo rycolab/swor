@@ -285,9 +285,8 @@ def test_sampling():
         return sum(partition)
 
     for i in range(100):
-        N = np.random.randint(2,100)
+        N = np.random.randint(2,20)
         k = np.random.randint(1,N)
-        print(N,k)
         lambdas = np.random.uniform(size=N)
         log_lambdas = np.log(lambdas)
         
