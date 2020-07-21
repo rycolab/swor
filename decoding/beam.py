@@ -56,8 +56,6 @@ class BeamDecoder(Decoder):
 
         assert not (decoder_args.diverse_prob_method and decoder_args.diverse_log_method)
         self.diverse_decoding = (self.string_kernel_weight > 0.)
-        if self.diverse_decoding:
-            self.string_kernel_state = {}
 
         self.diverse_method = "original"
         if decoder_args.diverse_prob_method:
@@ -99,6 +97,8 @@ class BeamDecoder(Decoder):
         self.count = 0
         self.time = 0
         self.initialize_predictors(src_sentence)
+        if self.diverse_decoding:
+            self.string_kernel_state = {}
         hypos = self._get_initial_hypos()
         it = 0
         while not self.stop_criterion(hypos):
