@@ -577,11 +577,13 @@ def lodhi_normalization(kernel_values, s, t, p, decay, string_kernel_previous, s
 
 
 def get_string_kernel_value_to_subtract_test(hypo_index, hypo_array, selected_indices, string_kernel_n,
-                                             string_kernel_decay, string_kernel_previous, string_kernel_current):
+                                             string_kernel_decay, string_kernel_previous, string_kernel_current,
+                                             mean=False):
     """Used for testing the string kernel.
        Helper function for string_kernel_diversity. Uses dynamic_programming_substring_kernel_k_efficient, normalizes
        with Lodhi's normalization and uses the result of substring length string_kernel_n.
-       Returns the value to subtract from the score of hypo_array[hypo_index] to obtain the augmented probability.
+       Returns the string kernel values to compute the similarity score to subtract from the score of
+       hypo_array[hypo_index] to obtain the augmented probability.
 
         Args:
             ``hypo_index`` (int):  Index of the hypothesis for which we want to compute the augmented probability
@@ -591,23 +593,34 @@ def get_string_kernel_value_to_subtract_test(hypo_index, hypo_array, selected_in
             ``string_kernel_decay`` (double): Parameter 'decay' for string kernel
             ``string_kernel_previous`` (dict): String kernel results from previous time step
             ``string_kernel_current`` (dict): String kernel results from current time step
+            ``mean`` (bool): if True, uses np.mean instead of just the n-th result of string kernel
+
 
         Returns:
-            Value to subtract from the probability of the hypothesis hypo_array[hypo_index]
+            String kernel values for values 1..n (can be used to subtract from the probability of the
+            hypothesis hypo_array[hypo_index])
         """
     if len(selected_indices) == 0:
         return 0
     elif len(selected_indices) == 1:
         kernel_values = dynamic_programming_substring_kernel_k_efficient(s=hypo_array[hypo_index].trgt_sentence,
-                                                                t=hypo_array[selected_indices[0]].trgt_sentence,
-                                                                p=string_kernel_n, decay=string_kernel_decay,
-                                                                string_kernel_previous=string_kernel_previous,
-                                                                string_kernel_current=string_kernel_current)
-        return lodhi_normalization(kernel_values=kernel_values, s=hypo_array[hypo_index].trgt_sentence,
-                                   t=hypo_array[selected_indices[0]].trgt_sentence,
-                                   p=string_kernel_n, decay=string_kernel_decay,
-                                   string_kernel_previous=string_kernel_previous,
-                                   string_kernel_current=string_kernel_current)[string_kernel_n]
+                                                                         t=hypo_array[
+                                                                             selected_indices[0]].trgt_sentence,
+                                                                         p=string_kernel_n, decay=string_kernel_decay,
+                                                                         string_kernel_previous=string_kernel_previous,
+                                                                         string_kernel_current=string_kernel_current)
+        if mean:
+            return np.mean(list(lodhi_normalization(kernel_values=kernel_values, s=hypo_array[hypo_index].trgt_sentence,
+                                                    t=hypo_array[selected_indices[0]].trgt_sentence,
+                                                    p=string_kernel_n, decay=string_kernel_decay,
+                                                    string_kernel_previous=string_kernel_previous,
+                                                    string_kernel_current=string_kernel_current).values()))
+        else:
+            return lodhi_normalization(kernel_values=kernel_values, s=hypo_array[hypo_index].trgt_sentence,
+                                       t=hypo_array[selected_indices[0]].trgt_sentence,
+                                       p=string_kernel_n, decay=string_kernel_decay,
+                                       string_kernel_previous=string_kernel_previous,
+                                       string_kernel_current=string_kernel_current)[string_kernel_n]
     else:
         # build matrix and take determinant
         indices_to_compare = selected_indices.copy()
@@ -616,18 +629,27 @@ def get_string_kernel_value_to_subtract_test(hypo_index, hypo_array, selected_in
         matrix = np.zeros((num_indices_to_compare, num_indices_to_compare))
         for i in range(num_indices_to_compare):
             for j in range(num_indices_to_compare):
-                kernel_values = dynamic_programming_substring_kernel_k_efficient(s=hypo_array[indices_to_compare[i]].trgt_sentence,
-                                                                                t=hypo_array[indices_to_compare[j]].trgt_sentence,
-                                                                                p=string_kernel_n, decay=string_kernel_decay,
-                                                                                string_kernel_previous=string_kernel_previous,
-                                                                                string_kernel_current=string_kernel_current)
-                matrix[i][j] = lodhi_normalization(kernel_values=kernel_values,
-                                                   s=hypo_array[indices_to_compare[i]].trgt_sentence,
-                                                   t=hypo_array[indices_to_compare[j]].trgt_sentence,
-                                                   p=string_kernel_n, decay=string_kernel_decay,
-                                                   string_kernel_previous=string_kernel_previous,
-                                                   string_kernel_current=string_kernel_current)[string_kernel_n]
-                
+                kernel_values = dynamic_programming_substring_kernel_k_efficient(
+                    s=hypo_array[indices_to_compare[i]].trgt_sentence,
+                    t=hypo_array[indices_to_compare[j]].trgt_sentence,
+                    p=string_kernel_n, decay=string_kernel_decay,
+                    string_kernel_previous=string_kernel_previous,
+                    string_kernel_current=string_kernel_current)
+                if mean:
+                    matrix[i][j] = np.mean(list(lodhi_normalization(kernel_values=kernel_values,
+                                                                    s=hypo_array[indices_to_compare[i]].trgt_sentence,
+                                                                    t=hypo_array[indices_to_compare[j]].trgt_sentence,
+                                                                    p=string_kernel_n, decay=string_kernel_decay,
+                                                                    string_kernel_previous=string_kernel_previous,
+                                                                    string_kernel_current=string_kernel_current).values()))
+                else:
+                    matrix[i][j] = lodhi_normalization(kernel_values=kernel_values,
+                                                       s=hypo_array[indices_to_compare[i]].trgt_sentence,
+                                                       t=hypo_array[indices_to_compare[j]].trgt_sentence,
+                                                       p=string_kernel_n, decay=string_kernel_decay,
+                                                       string_kernel_previous=string_kernel_previous,
+                                                       string_kernel_current=string_kernel_current)[string_kernel_n]
+
         return np.linalg.det(matrix)
 
 
@@ -736,17 +758,34 @@ def select_with_string_kernel_diversity(arr, n, string_kernel_n, string_kernel_d
                                                                                                     selected_indices,
                                                                                                     string_kernel_n,
                                                                                                     string_kernel_decay)
-                    dynamic_test_val = get_string_kernel_value_to_subtract_test(hypo_index=i, hypo_array=arr,
+                    dynamic_test_val_n = get_string_kernel_value_to_subtract_test(hypo_index=i, hypo_array=arr,
                                                                                 selected_indices=selected_indices,
                                                                                 string_kernel_n=string_kernel_n,
                                                                                 string_kernel_decay=string_kernel_decay,
                                                                                 string_kernel_previous=string_kernel_previous,
                                                                                 string_kernel_current=string_kernel_current)
-                    if abs(dynamic_test_val - lodhi_test_val) > 0.00000000001:
+
+                    dynamic_test_val_mean = get_string_kernel_value_to_subtract_test(hypo_index=i, hypo_array=arr,
+                                                                                selected_indices=selected_indices,
+                                                                                string_kernel_n=string_kernel_n,
+                                                                                string_kernel_decay=string_kernel_decay,
+                                                                                string_kernel_previous=string_kernel_previous,
+                                                                                string_kernel_current=string_kernel_current,
+                                                                                mean=True)
+
+                    if abs(dynamic_test_val_n - lodhi_test_val) > 0.00000000001:
                         print("")
                         print(lodhi_test_val)
-                        print(dynamic_test_val)
-                        print("Difference: ", abs(dynamic_test_val-lodhi_test_val))
+                        print(dynamic_test_val_n)
+                        print("Difference: ", abs(dynamic_test_val_n - lodhi_test_val))
+                        assert(abs(dynamic_test_val_n - lodhi_test_val) < 0.00000000001)
+
+                    if abs(dynamic_test_val_mean - similarity_score) > 0.00000000001:
+                        print("")
+                        print(similarity_score)
+                        print(dynamic_test_val_mean)
+                        print("Difference: ", abs(dynamic_test_val_mean - similarity_score))
+                        assert(abs(dynamic_test_val_mean - similarity_score) < 0.00000000001)
 
                 if method == "prob":
                     kernel_prob = string_kernel_weight*(1. - similarity_score)
