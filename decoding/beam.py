@@ -56,6 +56,8 @@ class BeamDecoder(Decoder):
 
         assert not (decoder_args.diverse_prob_method and decoder_args.diverse_log_method)
         self.diverse_decoding = (self.string_kernel_weight > 0.)
+        if self.diverse_decoding:
+            self.string_kernel_state = {}
 
         self.diverse_method = "original"
         if decoder_args.diverse_prob_method:
@@ -80,9 +82,10 @@ class BeamDecoder(Decoder):
     def _get_next_hypos(self, all_hypos, all_scores):
         """Get hypos for the next iteration. """
         if self.diverse_decoding:
-            inds = utils.select_with_string_kernel_diversity(all_hypos, self.beam_size, self.string_kernel_n,
-                                                         self.string_kernel_decay, self.string_kernel_weight,
-                                                         method=self.diverse_method)
+            inds, self.string_kernel_state = \
+                utils.select_with_string_kernel_diversity(all_hypos, self.beam_size, self.string_kernel_n,
+                                                          self.string_kernel_decay, self.string_kernel_weight,
+                                                          self.string_kernel_state, method=self.diverse_method)
         else:
             inds = utils.argmax_n(all_scores, self.beam_size)
         return [all_hypos[ind] for ind in inds]
