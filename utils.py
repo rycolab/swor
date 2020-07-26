@@ -712,7 +712,7 @@ def get_string_kernel_value_to_subtract(hypo_index, hypo_array, selected_indices
         return np.linalg.det(matrix)
 
 
-def select_with_string_kernel_diversity(arr, n, string_kernel_n, string_kernel_decay, string_kernel_weight,
+def select_with_string_kernel_diversity(arr, scores, n, string_kernel_n, string_kernel_decay, string_kernel_weight,
                                         string_kernel_state, method="original"):
     """Get indices of the ``n`` hypotheses from ``arr`` with the maximum scores
     after augmenting the scores with the string kernel diversity. The
@@ -789,11 +789,11 @@ def select_with_string_kernel_diversity(arr, n, string_kernel_n, string_kernel_d
 
                 if method == "prob":
                     kernel_prob = string_kernel_weight*(1. - similarity_score)
-                    hypotheses_score = log_add(arr[i].score/len(arr[i]), np.log(kernel_prob, where=kernel_prob!=0)) 
+                    hypotheses_score = log_add(scores[i], np.log(kernel_prob, where=kernel_prob!=0)) 
                 elif method == "log":
-                    hypotheses_score = arr[i].score - string_kernel_weight * np.log(similarity_score, where=similarity_score!=0)
+                    hypotheses_score = scores[i] - string_kernel_weight * np.log(similarity_score, where=similarity_score!=0)
                 else:
-                    hypotheses_score = arr[i].score - string_kernel_weight * similarity_score
+                    hypotheses_score = scores[i] - string_kernel_weight * similarity_score
                 augmented_probs.append(hypotheses_score)
             else:
                 # if index was already selected, give it negative infinity probability

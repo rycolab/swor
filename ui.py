@@ -313,6 +313,8 @@ def get_parser():
                        help="Use probability method for diverse decoding")
     group.add_argument("--diverse_log_method", default=False, action="store_true",
                        help="Use log penalty for diverse decoding")
+    group.add_argument("--length_normalization", default=False, action="store_true",
+                       help="Normalize hypothesis score by length")
 
     ## Output options
     group = parser.add_argument_group('Output options')

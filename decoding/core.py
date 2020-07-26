@@ -258,6 +258,7 @@ class Decoder(Observable):
         self.current_sen_id = -1
         self.apply_predictors_count = 0
         self.temperature = decoder_args.temperature
+        self.length_norm = decoder_args.length_normalization
          # score function will be monotonic without modifications to scoring function;
          # currently, modified objectives are not implemented in this library. Can
          # bring them back if wanted

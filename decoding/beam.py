@@ -81,7 +81,7 @@ class BeamDecoder(Decoder):
         """Get hypos for the next iteration. """
         if self.diverse_decoding:
             inds, self.string_kernel_state = \
-                utils.select_with_string_kernel_diversity(all_hypos, self.beam_size, self.string_kernel_n,
+                utils.select_with_string_kernel_diversity(all_hypos, all_scores, self.beam_size, self.string_kernel_n,
                                                           self.string_kernel_decay, self.string_kernel_weight,
                                                           self.string_kernel_state, method=self.diverse_method)
         else:
