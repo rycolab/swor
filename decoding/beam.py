@@ -65,6 +65,8 @@ class BeamDecoder(Decoder):
         if self.diverse_decoding and decoder_args.early_stopping:
             logging.warn("Early stopping enabled with diverse decoding. full "
                         "diverse set may not be returned")
+
+        self.use_old_kernel_method = decoder_args.use_old_kernel_method
     
     def _best_eos(self, hypos):
         """Returns true if the best hypothesis ends with </S>"""
@@ -80,10 +82,15 @@ class BeamDecoder(Decoder):
     def _get_next_hypos(self, all_hypos, all_scores):
         """Get hypos for the next iteration. """
         if self.diverse_decoding:
-            inds, self.string_kernel_state = \
-                utils.select_with_string_kernel_diversity(all_hypos, all_scores, self.beam_size, self.string_kernel_n,
-                                                          self.string_kernel_decay, self.string_kernel_weight,
-                                                          self.string_kernel_state, method=self.diverse_method)
+            if self.use_old_kernel_method:
+                inds, self.string_kernel_state = \
+                        utils.select_with_string_kernel_diversity(all_hypos, all_scores, self.beam_size, self.string_kernel_n,
+                                                              self.string_kernel_decay, self.string_kernel_weight,
+                                                              self.string_kernel_state, method=self.diverse_method)
+            else:
+                inds, self.string_kernel_state = \
+                    utils.select_with_fast_greedy_map_inference(all_hypos, all_scores, self.beam_size, self.string_kernel_n,
+                                                                self.string_kernel_decay, self.string_kernel_state)
         else:
             inds = utils.argmax_n(all_scores, self.beam_size)
         return [all_hypos[ind] for ind in inds]

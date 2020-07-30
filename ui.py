@@ -315,6 +315,8 @@ def get_parser():
                        help="Use log penalty for diverse decoding")
     group.add_argument("--length_normalization", default=False, action="store_true",
                        help="Normalize hypothesis score by length")
+    group.add_argument("--use_old_kernel_method", default=False, action="store_true",
+                       help="Use the old, iterative method for the selection of hypotheses at each time step.")
 
     ## Output options
     group = parser.add_argument_group('Output options')

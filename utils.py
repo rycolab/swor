@@ -803,6 +803,128 @@ def select_with_string_kernel_diversity(arr, scores, n, string_kernel_n, string_
     return selected_indices, string_kernel_current
 
 
+# String Kernel + DPP + Fast Greedy MAP Inference
+
+# computes the scaling factor for making matrix p.s.d.
+def get_matrix_scaling_factor(matrix):
+    dim_matrix = matrix.shape[0]
+    ratios = np.zeros(dim_matrix)
+    for i in range(dim_matrix):
+        off_diag_sum = 0.0
+        diag = matrix[i, i]
+        for j in range(dim_matrix):
+            if not i == j:
+                off_diag_sum += matrix[i, j]
+        ratios[i] = diag/off_diag_sum
+    return np.min(ratios)
+
+
+# given a matrix, scales its off-diagonal values to make it positive semi-definite
+def make_matrix_psd(matrix, scaling_factor):
+    dim_matrix = matrix.shape[0]
+    for i in range(dim_matrix):
+        for j in range(dim_matrix):
+            if not i == j:
+                matrix[i, j] = scaling_factor * matrix[i, j]
+    return matrix
+
+
+# computes p.s.d. K matrix
+def compute_K(arr, scores, n, string_kernel_n, string_kernel_decay, string_kernel_previous, string_kernel_current):
+    num_hypotheses = len(arr)
+    matrix = np.zeros((num_hypotheses, num_hypotheses))
+    for i in range(num_hypotheses):
+        for j in range(num_hypotheses):
+            if i == j:
+                # use probability between 0 and 1
+                log_prob = scores[i]
+                matrix[i][j] = np.exp(log_prob)
+            else:
+                kernel_values = dynamic_programming_substring_kernel_k_efficient(s=arr[i].trgt_sentence,
+                                                                                 t=arr[j].trgt_sentence,
+                                                                                 p=string_kernel_n,
+                                                                                 decay=string_kernel_decay,
+                                                                                 string_kernel_previous=string_kernel_previous,
+                                                                                 string_kernel_current=string_kernel_current)
+                kernel_values = lodhi_normalization(kernel_values=kernel_values,
+                                                    s=arr[i].trgt_sentence,
+                                                    t=arr[j].trgt_sentence,
+                                                    p=string_kernel_n, decay=string_kernel_decay,
+                                                    string_kernel_previous=string_kernel_previous,
+                                                    string_kernel_current=string_kernel_current)
+
+                matrix[i][j] = np.mean(list(kernel_values.values()))
+
+    # scale the off-diagonals to make the matrix p.s.d.
+    scaling_factor = get_matrix_scaling_factor(matrix)
+    return make_matrix_psd(matrix, scaling_factor)
+
+
+# computes L-ensemble given K
+def compute_L(K):
+    dim_K = K.shape[0]
+    inverse_term = np.linalg.inv(np.identity(dim_K)-K)
+    return np.matmul(K, inverse_term)
+
+
+# fast greedy map inference algorithm. returns list of n selected indices.
+def fast_greedy_map_inference(L, n):
+
+    # initialize
+    k_2 = L.shape[0]
+    c = [[] for i in range(k_2)]
+    d_2 = [L[i, i] for i in range(k_2)]
+    j = argmax([np.log(d) for d in d_2])
+    Y_g = {j}
+
+    # iterate
+    while len(Y_g) < n:
+        for i in range(k_2):
+            if i not in Y_g:
+                e_i = (L[j, i] - float(np.inner(c[j], c[i])))/np.sqrt(d_2[j])
+                c[i].append(e_i)
+                d_2[i] = d_2[i] - e_i ** 2
+        log_d_2 = [np.log(d) for d in d_2]
+        log_d_2_without_Y_g = [-np.inf if index in Y_g else log_d_2[index] for index in range(k_2)]
+        j = argmax(log_d_2_without_Y_g)
+        Y_g.add(j)
+    assert(len(Y_g) == n)
+    return list(Y_g)
+
+
+def select_with_fast_greedy_map_inference(arr, scores, n, string_kernel_n, string_kernel_decay, string_kernel_state):
+    """Get indices of the ``n`` hypotheses from ``arr`` selected with the fast greedy MAP inference algorithm.
+        Uses string kernel. The parameter ``arr`` is a list of PartialHypothesis.
+
+        Args:
+            arr (list):  List of PartialHypothesis objects
+            scores (list): List of scores of the arr objects
+            n  (int):  Number of values to retrieve
+            string_kernel_n (int):  n for subsequence kernel, denotes the length
+                                    of the subsequences to consider
+            string_kernel_decay (float): decay factor for the string kernel
+            string_kernel_state (dict): previously computed string kernel results
+
+        Returns:
+            List of indices of the ``n`` best hypotheses in ``arr``,
+            considering the score and the diversity computed with the string kernel,
+            selected with the fast greedy MAP inference algorithm
+        """
+
+    if len(arr) <= n:
+        return range(len(arr)), string_kernel_state
+
+    string_kernel_previous = string_kernel_state
+    string_kernel_current = {}
+    K = compute_K(arr, scores, n, string_kernel_n, string_kernel_decay, string_kernel_previous=string_kernel_previous,
+                  string_kernel_current=string_kernel_current)
+    L = compute_L(K)
+
+    selected_indices = fast_greedy_map_inference(L, n)
+
+    return selected_indices, string_kernel_current
+
+
 # Miscellaneous
 
 
