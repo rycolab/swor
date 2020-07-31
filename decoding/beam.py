@@ -90,7 +90,8 @@ class BeamDecoder(Decoder):
             else:
                 inds, self.string_kernel_state = \
                     utils.select_with_fast_greedy_map_inference(all_hypos, all_scores, self.beam_size, self.string_kernel_n,
-                                                                self.string_kernel_decay, self.string_kernel_state)
+                                                                self.string_kernel_decay, self.string_kernel_weight,
+                                                                self.string_kernel_state)
         else:
             inds = utils.argmax_n(all_scores, self.beam_size)
         return [all_hypos[ind] for ind in inds]

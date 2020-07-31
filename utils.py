@@ -363,33 +363,32 @@ def normalization_for_dynamic_programming_approach(K, decay):
     return normalized_K
 
 
-# dynamic programming approach from this paper:
-# https://pdfs.semanticscholar.org/07f9/4059372818242a2d09a42580a827d2c77f73.pdf
-# optimized to reuse previous results
-def dynamic_programming_substring_kernel_k_efficient(s, t, p, decay, string_kernel_previous, string_kernel_current):
-
-    if p < 1:
-        print("the string kernel is only defined for positive values")
-        exit(1)
-
+def find_computed_kernel(s, t, p, decay, string_kernel_previous, string_kernel_current):
     if (str(s), str(t), p, decay) in string_kernel_current:
         # result can be loaded from current time step
         _, _, K = string_kernel_current[(str(s), str(t), p, decay)]
         return K
+
+    elif (str(t), str(s), p, decay) in string_kernel_current:
+        # result can be loaded from current time step
+        _, _, K = string_kernel_current[(str(t), str(s), p, decay)]
+        return K
+
     elif (str(s), str(t), p, decay) in string_kernel_previous:
         # result can be loaded from previous time step
         # this can happen if s and t had already reached EOS in the previous time step
         S, k_, K = string_kernel_previous[(str(s), str(t), p, decay)]
         string_kernel_current[(str(s), str(t), p, decay)] = (S, k_, K)
         return K
-    elif (str(t), str(s), p, decay) in string_kernel_current:
-        # symmetric result can be loaded from current time step (since K(s,t) == K(t,s))
-        S, k_, K = string_kernel_current[(str(t), str(s), p, decay)]
-        S_t = transpose_all_values(S)
-        k_t = transpose_all_values(k_)
-        string_kernel_current[(str(s), str(t), p, decay)] = (S_t, k_t, K)
+
+    elif (str(t), str(s), p, decay) in string_kernel_previous:
+        # result can be loaded from previous time step
+        # this can happen if s and t had already reached EOS in the previous time step
+        S, k_, K = string_kernel_previous[(str(t), str(s), p, decay)]
+        string_kernel_current[(str(s), str(t), p, decay)] = (S, k_, K)
         return K
 
+def compute_kernel(s, t, p, decay, string_kernel_previous, string_kernel_current):
     # K stores the kernel results for the substring lengths 1...n
     K = {}
 
@@ -433,8 +432,11 @@ def dynamic_programming_substring_kernel_k_efficient(s, t, p, decay, string_kern
         if len(s) == len(t):
             previous_key = (str(s[:-1]), str(t[:-1]), p, decay)
             if previous_key not in string_kernel_previous:
-                raise Exception("previous result not found in string_kernel_previous even though it should be there! "
-                                "previous_key: ", previous_key)
+                if (str(t[:-1]), str(s[:-1]), p, decay) not in string_kernel_previous:
+                    raise Exception("previous result not found in string_kernel_previous even though it should be there! "
+                                    "previous_key: ", previous_key)
+                else: 
+                    return compute_kernel(t, s, p, decay, string_kernel_previous, string_kernel_current)
 
             else:
                 previous_S, previous_k_, previous_K = string_kernel_previous[previous_key]
@@ -483,8 +485,11 @@ def dynamic_programming_substring_kernel_k_efficient(s, t, p, decay, string_kern
 
             previous_key = (str(s[:-1]), str(t), p, decay)
             if previous_key not in string_kernel_previous:
-                raise Exception("previous result not found in string_kernel_previous even though it should be there! "
-                                "previous_key: ", previous_key)
+                if (str(t), str(s[:-1]), p, decay) not in string_kernel_previous:
+                    raise Exception("previous result not found in string_kernel_previous even though it should be there! "
+                                    "previous_key: ", previous_key)
+                else: 
+                    return compute_kernel( t, s, p, decay, string_kernel_previous, string_kernel_current)
 
             previous_S, previous_k_, previous_K = string_kernel_previous[previous_key]
 
@@ -521,8 +526,11 @@ def dynamic_programming_substring_kernel_k_efficient(s, t, p, decay, string_kern
             # len(t) > len(s)
             previous_key = (str(s), str(t[:-1]), p, decay)
             if previous_key not in string_kernel_previous:
-                raise Exception("previous result not found in string_kernel_previous even though it should be there! "
-                                "previous_key: ", previous_key)
+                if (str(t[:-1]), str(s), p, decay) not in string_kernel_previous:
+                    raise Exception("previous result not found in string_kernel_previous even though it should be there! "
+                                    "previous_key: ", previous_key)
+                else: 
+                    return compute_kernel(t, s, p, decay, string_kernel_previous, string_kernel_current)
 
             previous_S, previous_k_, previous_K = string_kernel_previous[previous_key]
 
@@ -557,6 +565,20 @@ def dynamic_programming_substring_kernel_k_efficient(s, t, p, decay, string_kern
 
     return K
 
+# dynamic programming approach from this paper:
+# https://pdfs.semanticscholar.org/07f9/4059372818242a2d09a42580a827d2c77f73.pdf
+# optimized to reuse previous results
+def dynamic_programming_substring_kernel_k_efficient(s, t, p, decay, string_kernel_previous, string_kernel_current):
+
+    if p < 1:
+        print("the string kernel is only defined for positive values")
+        exit(1)
+
+    K = find_computed_kernel(s, t, p, decay, string_kernel_previous, string_kernel_current)
+    if not K:
+        K = compute_kernel(s, t, p, decay, string_kernel_previous, string_kernel_current)
+
+    return K
 
 # normalization like in the Lodhi et al. paper: K_norm(s,t) = K(s,t) / (sqrt(K(s,s) * K(t,t)))
 def lodhi_normalization(kernel_values, s, t, p, decay, string_kernel_previous, string_kernel_current):
@@ -806,58 +828,38 @@ def select_with_string_kernel_diversity(arr, scores, n, string_kernel_n, string_
 # String Kernel + DPP + Fast Greedy MAP Inference
 
 # computes the scaling factor for making matrix p.s.d.
-def get_matrix_scaling_factor(matrix):
-    dim_matrix = matrix.shape[0]
-    ratios = np.zeros(dim_matrix)
-    for i in range(dim_matrix):
-        off_diag_sum = 0.0
-        diag = matrix[i, i]
-        for j in range(dim_matrix):
-            if not i == j:
-                off_diag_sum += matrix[i, j]
-        ratios[i] = diag/off_diag_sum
+def get_matrix_scaling_factor(matrix, probs):
+    row_sums = matrix.sum(1)
+    ratios = probs/row_sums
     return np.min(ratios)
 
-
-# given a matrix, scales its off-diagonal values to make it positive semi-definite
-def make_matrix_psd(matrix, scaling_factor):
-    dim_matrix = matrix.shape[0]
-    for i in range(dim_matrix):
-        for j in range(dim_matrix):
-            if not i == j:
-                matrix[i, j] = scaling_factor * matrix[i, j]
-    return matrix
-
-
 # computes p.s.d. K matrix
-def compute_K(arr, scores, n, string_kernel_n, string_kernel_decay, string_kernel_previous, string_kernel_current):
+def compute_K(arr, scores, n, string_kernel_n, string_kernel_decay, string_kernel_weight,
+              string_kernel_previous, string_kernel_current):
     num_hypotheses = len(arr)
     matrix = np.zeros((num_hypotheses, num_hypotheses))
+    probs = np.exp(scores)
     for i in range(num_hypotheses):
-        for j in range(num_hypotheses):
-            if i == j:
-                # use probability between 0 and 1
-                log_prob = scores[i]
-                matrix[i][j] = np.exp(log_prob)
-            else:
-                kernel_values = dynamic_programming_substring_kernel_k_efficient(s=arr[i].trgt_sentence,
-                                                                                 t=arr[j].trgt_sentence,
-                                                                                 p=string_kernel_n,
-                                                                                 decay=string_kernel_decay,
-                                                                                 string_kernel_previous=string_kernel_previous,
-                                                                                 string_kernel_current=string_kernel_current)
-                kernel_values = lodhi_normalization(kernel_values=kernel_values,
-                                                    s=arr[i].trgt_sentence,
-                                                    t=arr[j].trgt_sentence,
-                                                    p=string_kernel_n, decay=string_kernel_decay,
-                                                    string_kernel_previous=string_kernel_previous,
-                                                    string_kernel_current=string_kernel_current)
+        for j in range(i+1, num_hypotheses):
+            kernel_values = dynamic_programming_substring_kernel_k_efficient(s=arr[i].trgt_sentence,
+                                                                             t=arr[j].trgt_sentence,
+                                                                             p=string_kernel_n,
+                                                                             decay=string_kernel_decay,
+                                                                             string_kernel_previous=string_kernel_previous,
+                                                                             string_kernel_current=string_kernel_current)
+            kernel_values = lodhi_normalization(kernel_values=kernel_values,
+                                                s=arr[i].trgt_sentence,
+                                                t=arr[j].trgt_sentence,
+                                                p=string_kernel_n, decay=string_kernel_decay,
+                                                string_kernel_previous=string_kernel_previous,
+                                                string_kernel_current=string_kernel_current)
 
-                matrix[i][j] = np.mean(list(kernel_values.values()))
+            matrix[i][j] = np.mean(list(kernel_values.values()))
 
+    matrix = matrix + np.transpose(matrix)
     # scale the off-diagonals to make the matrix p.s.d.
-    scaling_factor = get_matrix_scaling_factor(matrix)
-    return make_matrix_psd(matrix, scaling_factor)
+    scaling_factor = get_matrix_scaling_factor(matrix, probs)
+    return matrix*scaling_factor*string_kernel_weight + np.diag(probs)
 
 
 # computes L-ensemble given K
@@ -892,7 +894,8 @@ def fast_greedy_map_inference(L, n):
     return list(Y_g)
 
 
-def select_with_fast_greedy_map_inference(arr, scores, n, string_kernel_n, string_kernel_decay, string_kernel_state):
+def select_with_fast_greedy_map_inference(arr, scores, n, string_kernel_n, string_kernel_decay, 
+                                          string_kernel_weight, string_kernel_state):
     """Get indices of the ``n`` hypotheses from ``arr`` selected with the fast greedy MAP inference algorithm.
         Uses string kernel. The parameter ``arr`` is a list of PartialHypothesis.
 
@@ -910,14 +913,14 @@ def select_with_fast_greedy_map_inference(arr, scores, n, string_kernel_n, strin
             considering the score and the diversity computed with the string kernel,
             selected with the fast greedy MAP inference algorithm
         """
-
+    assert string_kernel_weight <= 1 and string_kernel_weight >= 0
     if len(arr) <= n:
         return range(len(arr)), string_kernel_state
 
     string_kernel_previous = string_kernel_state
     string_kernel_current = {}
-    K = compute_K(arr, scores, n, string_kernel_n, string_kernel_decay, string_kernel_previous=string_kernel_previous,
-                  string_kernel_current=string_kernel_current)
+    K = compute_K(arr, scores, n, string_kernel_n, string_kernel_decay, string_kernel_weight,
+        string_kernel_previous=string_kernel_previous, string_kernel_current=string_kernel_current)
     L = compute_L(K)
 
     selected_indices = fast_greedy_map_inference(L, n)
