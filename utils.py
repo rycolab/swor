@@ -829,16 +829,21 @@ def select_with_string_kernel_diversity(arr, scores, n, string_kernel_n, string_
 
 # computes the scaling factor for making matrix p.s.d.
 def get_matrix_scaling_factor(matrix, probs):
-    row_sums = matrix.sum(1)
+    row_sums = np.sum(matrix, axis=1)
     ratios = probs/row_sums
     return np.min(ratios)
+
+def scale_matrix(matrix, probs):
+    matrix = np.sqrt(np.minimum(matrix, 1. - 0.0001))
+    matrix *= probs
+    return np.transpose(matrix)*probs
 
 # computes p.s.d. K matrix
 def compute_K(arr, scores, n, string_kernel_n, string_kernel_decay, string_kernel_weight,
               string_kernel_previous, string_kernel_current):
     num_hypotheses = len(arr)
     matrix = np.zeros((num_hypotheses, num_hypotheses))
-    probs = np.exp(scores)
+    probs = np.exp(scores - logsumexp(scores))
     for i in range(num_hypotheses):
         for j in range(i+1, num_hypotheses):
             kernel_values = dynamic_programming_substring_kernel_k_efficient(s=arr[i].trgt_sentence,
@@ -854,13 +859,12 @@ def compute_K(arr, scores, n, string_kernel_n, string_kernel_decay, string_kerne
                                                 string_kernel_previous=string_kernel_previous,
                                                 string_kernel_current=string_kernel_current)
 
-            matrix[i][j] = np.mean(list(kernel_values.values()))
+            matrix[i][j] = np.mean(list(kernel_values.values()))*string_kernel_weight
 
     matrix = matrix + np.transpose(matrix)
     # scale the off-diagonals to make the matrix p.s.d.
-    scaling_factor = get_matrix_scaling_factor(matrix, probs)
-    return matrix*scaling_factor*string_kernel_weight + np.diag(probs)
-
+    matrix = scale_matrix(matrix, probs)
+    return matrix + np.diag(probs)
 
 # computes L-ensemble given K
 def compute_L(K):
@@ -890,6 +894,7 @@ def fast_greedy_map_inference(L, n):
         log_d_2_without_Y_g = [-np.inf if index in Y_g else log_d_2[index] for index in range(k_2)]
         j = argmax(log_d_2_without_Y_g)
         Y_g.add(j)
+
     assert(len(Y_g) == n)
     return list(Y_g)
 
@@ -913,7 +918,7 @@ def select_with_fast_greedy_map_inference(arr, scores, n, string_kernel_n, strin
             considering the score and the diversity computed with the string kernel,
             selected with the fast greedy MAP inference algorithm
         """
-    assert string_kernel_weight <= 1 and string_kernel_weight >= 0
+    assert string_kernel_weight >= 0
     if len(arr) <= n:
         return range(len(arr)), string_kernel_state
 
@@ -924,6 +929,10 @@ def select_with_fast_greedy_map_inference(arr, scores, n, string_kernel_n, strin
     L = compute_L(K)
 
     selected_indices = fast_greedy_map_inference(L, n)
+    new_matrix = K[np.ix_(selected_indices, selected_indices)]
+    print("New set probability:", np.linalg.det(new_matrix))
+    print("Old set probability:", prod([K[i][i] for i in selected_indices]))
+    print('--------')
 
     return selected_indices, string_kernel_current
 
