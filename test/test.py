@@ -273,7 +273,18 @@ def test_utils():
         assert_equal(want, utils.log_add(np.log(a), np.log(b)), 'log add timv')
         assert_equal(want, utils.log_add_old(np.log(a), np.log(b)), 'log add clara')
 
+    test_bit_logsumexp()
+
+def test_bit_logsumexp():
     
+    a = np.random.uniform(size=10)
+    b = np.random.uniform(size=10) - 0.5
+    signs_a = [1]*len(a)
+    signs_b = [1 if x > 0 else -1 for x in b]
+    log_a = np.log(a)
+    log_b = np.log(abs(b))
+    sign, val = utils.bit_logsumexp(log_a, log_b, signs_a, signs_b)
+    assert_equal(np.inner(a,b), sign*np.exp(val))  
 
 def test_sampling():
     from arsenal.maths import assert_equal

@@ -224,6 +224,7 @@ def log_add(x, y):
             r = y
         return r + log1pexp(d)
 
+vec_log_add = np.vectorize(log_add)
 
 def log_minus(x, y):
     if x == y:
@@ -828,11 +829,11 @@ def select_with_string_kernel_diversity(arr, scores, n, string_kernel_n, string_
 # String Kernel + DPP + Fast Greedy MAP Inference
 
 # computes p.s.d. L matrix
-def compute_L(arr, scores, n, string_kernel_n, string_kernel_decay, string_kernel_weight,
-              string_kernel_previous, string_kernel_current):
+def compute_log_L(arr, scores, n, string_kernel_n, string_kernel_decay, string_kernel_weight,
+              string_kernel_previous, string_kernel_current, method1=True):
     num_hypotheses = len(arr)
     matrix = np.zeros((num_hypotheses, num_hypotheses))
-    probs = np.exp(scores - logsumexp(scores))
+    probs = scores - logsumexp(scores)
     for i in range(num_hypotheses):
         for j in range(i+1, num_hypotheses):
             kernel_values = dynamic_programming_substring_kernel_k_efficient(s=arr[i].trgt_sentence,
@@ -851,12 +852,19 @@ def compute_L(arr, scores, n, string_kernel_n, string_kernel_decay, string_kerne
             matrix[i][j] = np.mean(list(kernel_values.values()))
 
     matrix = matrix + np.transpose(matrix) + np.eye(matrix.shape[0])
+    log_matrix = np.log(matrix*string_kernel_weight, where=matrix > 0)
+    log_matrix[matrix == 0] = NEG_INF
     if TEST:
-        assert (np.linalg.eigvals(matrix*string_kernel_weight + np.diag(probs)) >= 0).all()
-    # mat = matrix*string_kernel_weight + np.diag(probs)
-    # mat[mat == 0] = NEG_INF
-    # print("TEST:",(np.linalg.eigvals(np.log(mat, where=mat>0)) >= 0).all())
-    return matrix*string_kernel_weight + np.diag(probs)
+        assert (np.linalg.eigvals(matrix*string_kernel_weight) >= 0).all()
+
+    if method1:
+        diags = vec_log_add(np.log(string_kernel_weight), probs)
+        np.fill_diagonal(log_matrix, diags)
+        return log_matrix
+
+    else:
+        sq_probs = 0.5*probs
+        return sq_probs+np.transpose(sq_probs+log_matrix)
 
 # computes K-ensemble given L
 def compute_K(L):
@@ -889,6 +897,52 @@ def fast_greedy_map_inference(L, n):
     assert(len(Y_g) == n)
     return list(Y_g)
 
+# fast greedy map inference algorithm. returns list of n selected indices.
+def log_fast_greedy_map_inference(log_L, n):
+
+    # initialize
+    k_2 = log_L.shape[0]
+    c = [[] for i in range(k_2)]
+    sign_bits = [[] for i in range(k_2)]
+    log_d_2 = [log_L[i, i] for i in range(k_2)]
+    j = argmax(log_d_2)
+    Y_g = {j}
+
+    # iterate
+    while len(Y_g) < n:
+        for i in range(k_2):
+            if i not in Y_g:
+                sign, log_inner = bit_logsumexp(c[i], c[j], sign_bits[i], sign_bits[j])
+                func = log_add if sign == -1 else log_minus
+                if log_L[j, i] > log_inner: 
+                    sign = 1
+                    e_i = func(log_L[j, i], log_inner) - 0.5*log_d_2[j]
+                else:
+                    sign = -sign
+                    e_i = func(log_inner,log_L[j, i]) - 0.5*log_d_2[j]
+                c[i].append(e_i)
+                sign_bits[i].append(sign)
+                log_d_2[i] = log_minus(log_d_2[i], 2*e_i)
+
+        log_d_2_without_Y_g = [-np.inf if index in Y_g else log_d_2[index] for index in range(k_2)]
+        j = argmax(log_d_2_without_Y_g)
+        Y_g.add(j)
+
+    assert(len(Y_g) == n)
+    return list(Y_g)
+
+def bit_logsumexp(arr1, arr2, sign_arr1, sign_arr2):
+    sign, log_inner = 1, NEG_INF
+    for ind, (x,y) in enumerate(zip(arr1, arr2)):
+        cur_sign = sign_arr1[ind]*sign_arr2[ind]
+        func = log_add if sign == cur_sign else log_minus
+        if log_inner > x+y: 
+            log_inner = func(log_inner, x+y)
+        else:
+            sign = cur_sign
+            log_inner = func(x+y, log_inner)
+    return sign, log_inner
+
 
 def select_with_fast_greedy_map_inference(arr, scores, n, string_kernel_n, string_kernel_decay, 
                                           string_kernel_weight, string_kernel_state):
@@ -915,12 +969,11 @@ def select_with_fast_greedy_map_inference(arr, scores, n, string_kernel_n, strin
 
     string_kernel_previous = string_kernel_state
     string_kernel_current = {}
-    L = compute_L(arr, scores, n, string_kernel_n, string_kernel_decay, string_kernel_weight,
+    log_L = compute_log_L(arr, scores, n, string_kernel_n, string_kernel_decay, string_kernel_weight,
         string_kernel_previous=string_kernel_previous, string_kernel_current=string_kernel_current)
-
-    selected_indices = fast_greedy_map_inference(L, n)
+    selected_indices = log_fast_greedy_map_inference(log_L, n)
     if TEST: 
-        K = compute_K(L)
+        K = compute_K(np.exp(L))
         new_matrix = K[np.ix_(selected_indices, selected_indices)]
         print("New set probability:", np.linalg.det(new_matrix))
         print("Old set probability:", prod([K[i][i] for i in selected_indices]))
