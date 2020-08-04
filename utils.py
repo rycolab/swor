@@ -827,19 +827,8 @@ def select_with_string_kernel_diversity(arr, scores, n, string_kernel_n, string_
 
 # String Kernel + DPP + Fast Greedy MAP Inference
 
-# computes the scaling factor for making matrix p.s.d.
-def get_matrix_scaling_factor(matrix, probs):
-    row_sums = np.sum(matrix, axis=1)
-    ratios = probs/row_sums
-    return np.min(ratios)
-
-def scale_matrix(matrix, probs):
-    matrix = np.sqrt(np.minimum(matrix, 1. - 0.0001))
-    matrix *= probs
-    return np.transpose(matrix)*probs
-
-# computes p.s.d. K matrix
-def compute_K(arr, scores, n, string_kernel_n, string_kernel_decay, string_kernel_weight,
+# computes p.s.d. L matrix
+def compute_L(arr, scores, n, string_kernel_n, string_kernel_decay, string_kernel_weight,
               string_kernel_previous, string_kernel_current):
     num_hypotheses = len(arr)
     matrix = np.zeros((num_hypotheses, num_hypotheses))
@@ -859,19 +848,21 @@ def compute_K(arr, scores, n, string_kernel_n, string_kernel_decay, string_kerne
                                                 string_kernel_previous=string_kernel_previous,
                                                 string_kernel_current=string_kernel_current)
 
-            matrix[i][j] = np.mean(list(kernel_values.values()))*string_kernel_weight
+            matrix[i][j] = np.mean(list(kernel_values.values()))
 
-    matrix = matrix + np.transpose(matrix)
-    # scale the off-diagonals to make the matrix p.s.d.
-    matrix = scale_matrix(matrix, probs)
-    return matrix + np.diag(probs)
+    matrix = matrix + np.transpose(matrix) + np.eye(matrix.shape[0])
+    if TEST:
+        assert (np.linalg.eigvals(matrix*string_kernel_weight + np.diag(probs)) >= 0).all()
+    # mat = matrix*string_kernel_weight + np.diag(probs)
+    # mat[mat == 0] = NEG_INF
+    # print("TEST:",(np.linalg.eigvals(np.log(mat, where=mat>0)) >= 0).all())
+    return matrix*string_kernel_weight + np.diag(probs)
 
-# computes L-ensemble given K
-def compute_L(K):
-    dim_K = K.shape[0]
-    inverse_term = np.linalg.inv(np.identity(dim_K)-K)
-    return np.matmul(K, inverse_term)
-
+# computes K-ensemble given L
+def compute_K(L):
+    dim_L = L.shape[0]
+    inverse_term = np.linalg.inv(np.identity(dim_L)+L)
+    return np.matmul(inverse_term, L)
 
 # fast greedy map inference algorithm. returns list of n selected indices.
 def fast_greedy_map_inference(L, n):
@@ -924,21 +915,20 @@ def select_with_fast_greedy_map_inference(arr, scores, n, string_kernel_n, strin
 
     string_kernel_previous = string_kernel_state
     string_kernel_current = {}
-    K = compute_K(arr, scores, n, string_kernel_n, string_kernel_decay, string_kernel_weight,
+    L = compute_L(arr, scores, n, string_kernel_n, string_kernel_decay, string_kernel_weight,
         string_kernel_previous=string_kernel_previous, string_kernel_current=string_kernel_current)
-    L = compute_L(K)
 
     selected_indices = fast_greedy_map_inference(L, n)
-    new_matrix = K[np.ix_(selected_indices, selected_indices)]
-    print("New set probability:", np.linalg.det(new_matrix))
-    print("Old set probability:", prod([K[i][i] for i in selected_indices]))
-    print('--------')
+    if TEST: 
+        K = compute_K(L)
+        new_matrix = K[np.ix_(selected_indices, selected_indices)]
+        print("New set probability:", np.linalg.det(new_matrix))
+        print("Old set probability:", prod([K[i][i] for i in selected_indices]))
+        print('--------')
 
     return selected_indices, string_kernel_current
 
-
 # Miscellaneous
-
 
 def get_path(tmpl, sub = 1):
     """Replaces the %d placeholder in ``tmpl`` with ``sub``. If ``tmpl``
