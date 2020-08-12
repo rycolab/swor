@@ -891,7 +891,6 @@ def compute_log_L(arr, scores, n, string_kernel_n, string_kernel_decay, string_k
     results_array = process_pool.starmap(compute_kernel, arguments_to_compute_K)
     process_pool.close()
     process_pool.join()
-    results_array = results_array
     print("multiprocessing took: ", time.time()-start)
 
     start = time.time()
