@@ -817,6 +817,10 @@ def select_with_string_kernel_diversity(arr, scores, n, string_kernel_n, string_
 
 # String Kernel + DPP + Fast Greedy MAP Inference
 
+def compute_kernel_multiprocessing(s, t, n, decay, val, return_dict, index_tuple):
+    return_dict[index_tuple] = compute_kernel(s, t, n, decay, val)
+
+
 def find_previous_val(s, t, string_kernel_n, string_kernel_decay, string_kernel_previous):
     len_s = len(s)
     len_t = len(t)
@@ -863,54 +867,53 @@ def compute_log_L(arr, scores, n, string_kernel_n, string_kernel_decay, string_k
     matrix = np.zeros((num_hypotheses, num_hypotheses))
     probs = scores - logsumexp(scores)
 
+    # PROCESS: works. but let's see if it's faster with  pool.
+    unnormalized_results = {}
+    return_dict = multiprocessing.Manager().dict()
+    jobs = []
+
 
     start = time.time()
-    process_pool = multiprocessing.Pool(4)
-    unnormalized_results = {}
-    indices_to_compute_K = []
-    arguments_to_compute_K = []
-    
-    start = time.time()
+    # compute kernel values between all hypotheses
     for i in range(num_hypotheses):
-        for j in range(i + 1, num_hypotheses):
+        for j in range(i+1, num_hypotheses):
             s = arr[i].trgt_sentence
             t = arr[j].trgt_sentence
-            # see if result has already been computed
             kernel_values = find_computed_kernel(s=s, t=t, p=string_kernel_n, decay=string_kernel_decay,
                                                  string_kernel_previous=string_kernel_previous,
                                                  string_kernel_current=string_kernel_current)
+
             if not kernel_values:
-                # hasn't been computed yet. need to compute it
-                indices_to_compute_K.append(((i,j), (s,t)))
-                # get the results from the previous time step that should be reused
+                # compute kernel
                 val = find_previous_val(s, t, string_kernel_n, string_kernel_decay, string_kernel_previous)
-                # prepare the arguments for multiprocessing
-                arguments_to_compute_K.append((s, t, string_kernel_n, string_kernel_decay, val))
+                args = (s, t, string_kernel_n, string_kernel_decay, val, return_dict, (i, j))
+                job = multiprocessing.Process(target=compute_kernel_multiprocessing, args=args)
+                jobs.append(job)
+                job.start()
             else:
-                # has already been computed
-                unnormalized_results[(i,j)] = kernel_values
-    print("preparation took: ", time.time()-start)
+                unnormalized_results[(i, j)] = kernel_values
 
-    start = time.time()
-    # compute the kernel values
-    results_array = process_pool.starmap(compute_kernel, arguments_to_compute_K)
-    process_pool.close()
-    process_pool.join()
-    results_array = results_array
-    print("multiprocessing took: ", time.time()-start)
+    # wait for jobs to finish
+    for job in jobs:
+        job.join()
 
+    print("until after join: ", time.time()-start)
+    
     start = time.time()
     # update string_kernel_current
-    for i in range(len(results_array)):
-        string_kernel_current[(str(indices_to_compute_K[i][1][0]), str(indices_to_compute_K[i][1][1]), string_kernel_n, string_kernel_decay)] = results_array[i]
-        unnormalized_results[indices_to_compute_K[i][0]] = results_array[i][1]
-    print("update: ", time.time() - start)
+    for i in range(num_hypotheses):
+        for j in range(i + 1, num_hypotheses):
+            if (i,j) in return_dict.keys():
+                string_kernel_current[(str(arr[i].trgt_sentence), str(arr[j].trgt_sentence), string_kernel_n, string_kernel_decay)] = \
+                return_dict[(i,j)]
+                unnormalized_results[(i,j)] = return_dict[(i,j)][1]
+    print("update took: ", time.time()-start)
 
     start = time.time()
     # normalize the kernel values
     for i in range(num_hypotheses):
         for j in range(i + 1, num_hypotheses):
-            kernel_values = lodhi_normalization(kernel_values=unnormalized_results[(i, j)],
+            kernel_values = lodhi_normalization(kernel_values=unnormalized_results[(i,j)],
                                                 s=arr[i].trgt_sentence,
                                                 t=arr[j].trgt_sentence,
                                                 p=string_kernel_n, decay=string_kernel_decay,
@@ -918,9 +921,9 @@ def compute_log_L(arr, scores, n, string_kernel_n, string_kernel_decay, string_k
                                                 string_kernel_current=string_kernel_current)
 
             matrix[i][j] = np.mean(list(kernel_values.values()))
-    print("normalize: ", time.time() - start)
+    print("normalize took: ", time.time()-start)
     matrix = matrix + np.transpose(matrix) + np.eye(matrix.shape[0])
-
+    
     log_matrix = np.log(matrix*string_kernel_weight, where=matrix > 0)
     log_matrix[matrix == 0] = NEG_INF
     if TEST:
