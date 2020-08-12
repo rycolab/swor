@@ -1,3 +1,5 @@
+import statistics
+import time
 from abc import abstractmethod
 import operator
 import logging
@@ -5,6 +7,8 @@ import os
 import sys
 from bisect import bisect_left
 from functools import reduce
+from itertools import product
+import multiprocessing
 from string_kernel_utils import get_string_kernel_value_to_subtract_compare_with_lodhi_recursive_normalized
 
 import numpy as np
@@ -367,29 +371,29 @@ def normalization_for_dynamic_programming_approach(K, decay):
 def find_computed_kernel(s, t, p, decay, string_kernel_previous, string_kernel_current):
     if (str(s), str(t), p, decay) in string_kernel_current:
         # result can be loaded from current time step
-        _, _, K = string_kernel_current[(str(s), str(t), p, decay)]
+        _, K = string_kernel_current[(str(s), str(t), p, decay)]
         return K
 
     elif (str(t), str(s), p, decay) in string_kernel_current:
         # result can be loaded from current time step
-        _, _, K = string_kernel_current[(str(t), str(s), p, decay)]
+        _, K = string_kernel_current[(str(t), str(s), p, decay)]
         return K
 
     elif (str(s), str(t), p, decay) in string_kernel_previous:
         # result can be loaded from previous time step
         # this can happen if s and t had already reached EOS in the previous time step
-        S, k_, K = string_kernel_previous[(str(s), str(t), p, decay)]
-        string_kernel_current[(str(s), str(t), p, decay)] = (S, k_, K)
+        S, K = string_kernel_previous[(str(s), str(t), p, decay)]
+        string_kernel_current[(str(s), str(t), p, decay)] = (S, K)
         return K
 
     elif (str(t), str(s), p, decay) in string_kernel_previous:
         # result can be loaded from previous time step
         # this can happen if s and t had already reached EOS in the previous time step
-        S, k_, K = string_kernel_previous[(str(t), str(s), p, decay)]
-        string_kernel_current[(str(s), str(t), p, decay)] = (S, k_, K)
+        S, K = string_kernel_previous[(str(t), str(s), p, decay)]
+        string_kernel_current[(str(s), str(t), p, decay)] = (S, K)
         return K
 
-def compute_kernel(s, t, p, decay, string_kernel_previous, string_kernel_current):
+def compute_kernel(s, t, p, decay, val):
     # K stores the kernel results for the substring lengths 1...n
     K = {}
 
@@ -423,28 +427,18 @@ def compute_kernel(s, t, p, decay, string_kernel_previous, string_kernel_current
                             k_[l][i, j] = (decay ** 2) * S[l][i - 1, j - 1]
                             K[l] = K[l] + k_[l][i, j]
 
-            string_kernel_current[(str(s), str(t), p, decay)] = (S, k_, K)
-        else:
-            string_kernel_current[(str(s), str(t), p, decay)] = (None, k_, K)
-
     else:
         # can reuse results from previous time step
 
         if len(s) == len(t):
-            previous_key = (str(s[:-1]), str(t[:-1]), p, decay)
-            if previous_key not in string_kernel_previous:
-                if (str(t[:-1]), str(s[:-1]), p, decay) not in string_kernel_previous:
-                    raise Exception("previous result not found in string_kernel_previous even though it should be there! "
-                                    "previous_key: ", previous_key)
-                else: 
-                    return compute_kernel(t, s, p, decay, string_kernel_previous, string_kernel_current)
-
+            previous_value = val
+            if previous_value is None:
+                raise Exception("previous result not found in string_kernel_previous even though it should be there! ")
             else:
-                previous_S, previous_k_, previous_K = string_kernel_previous[previous_key]
+                previous_S, previous_K = previous_value
 
                 # load k_[1] and K[1] from previous result
                 k_[1] = np.zeros((len(s) + 1, len(t) + 1))
-                k_[1][:-1, :-1] = previous_k_[1]
                 K[1] = previous_K[1]
 
                 for i in range(1, len(s)):
@@ -464,7 +458,6 @@ def compute_kernel(s, t, p, decay, string_kernel_previous, string_kernel_current
                     S[l] = np.zeros((len(s)+1, len(t)+1), dtype=np.double)
                     S[l][:-1, :-1] = previous_S[l]
                     k_[l] = np.zeros((len(s)+1, len(t)+1))
-                    k_[l][:-1, :-1] = previous_k_[l]
 
                     for i in range(1, len(s)):
                         for j in [len(t)]:
@@ -480,23 +473,16 @@ def compute_kernel(s, t, p, decay, string_kernel_previous, string_kernel_current
                                 k_[l][i, j] = (decay ** 2) * S[l][i - 1, j - 1]
                                 K[l] = K[l] + k_[l][i, j]
 
-                string_kernel_current[(str(s), str(t), p, decay)] = (S, k_, K)
-
         elif len(s) > len(t):
 
-            previous_key = (str(s[:-1]), str(t), p, decay)
-            if previous_key not in string_kernel_previous:
-                if (str(t), str(s[:-1]), p, decay) not in string_kernel_previous:
-                    raise Exception("previous result not found in string_kernel_previous even though it should be there! "
-                                    "previous_key: ", previous_key)
-                else: 
-                    return compute_kernel( t, s, p, decay, string_kernel_previous, string_kernel_current)
+            previous_value = val
+            if previous_value is None:
+                raise Exception("previous result not found in string_kernel_previous even though it should be there! ")
 
-            previous_S, previous_k_, previous_K = string_kernel_previous[previous_key]
+            previous_S, previous_K = previous_value
 
             # load k_[1] and K[1] from previous result
             k_[1] = np.zeros((len(s) + 1, len(t) + 1))
-            k_[1][:-1, :] = previous_k_[1]
             K[1] = previous_K[1]
 
             for j in range(1, len(t) + 1):
@@ -511,7 +497,6 @@ def compute_kernel(s, t, p, decay, string_kernel_previous, string_kernel_current
                 S[l] = np.zeros((len(s) + 1, len(t) + 1), dtype=np.double)
                 S[l][:-1, :] = previous_S[l]
                 k_[l] = np.zeros((len(s) + 1, len(t) + 1))
-                k_[l][:-1, :] = previous_k_[l]
 
                 for j in range(1, len(t) + 1):
                     for i in [len(s)]:
@@ -521,23 +506,16 @@ def compute_kernel(s, t, p, decay, string_kernel_previous, string_kernel_current
                             k_[l][i, j] = (decay ** 2) * S[l][i - 1, j - 1]
                             K[l] = K[l] + k_[l][i, j]
 
-            string_kernel_current[(str(s), str(t), p, decay)] = (S, k_, K)
-
         else:
             # len(t) > len(s)
-            previous_key = (str(s), str(t[:-1]), p, decay)
-            if previous_key not in string_kernel_previous:
-                if (str(t[:-1]), str(s), p, decay) not in string_kernel_previous:
-                    raise Exception("previous result not found in string_kernel_previous even though it should be there! "
-                                    "previous_key: ", previous_key)
-                else: 
-                    return compute_kernel(t, s, p, decay, string_kernel_previous, string_kernel_current)
+            previous_value = val
+            if previous_value is None:
+                raise Exception("previous result not found in string_kernel_previous even though it should be there! ")
 
-            previous_S, previous_k_, previous_K = string_kernel_previous[previous_key]
+            previous_S, previous_K = previous_value
 
             # load k_[1] and K[1] from previous result
             k_[1] = np.zeros((len(s) + 1, len(t) + 1))
-            k_[1][:, :-1] = previous_k_[1]
             K[1] = previous_K[1]
 
             for i in range(1, len(s) + 1):
@@ -552,7 +530,6 @@ def compute_kernel(s, t, p, decay, string_kernel_previous, string_kernel_current
                 S[l] = np.zeros((len(s) + 1, len(t) + 1), dtype=np.double)
                 S[l][:, :-1] = previous_S[l]
                 k_[l] = np.zeros((len(s) + 1, len(t) + 1))
-                k_[l][:, :-1] = previous_k_[l]
 
                 for i in range(1, len(s) + 1):
                     for j in [len(t)]:
@@ -562,9 +539,8 @@ def compute_kernel(s, t, p, decay, string_kernel_previous, string_kernel_current
                             k_[l][i, j] = (decay ** 2) * S[l][i - 1, j - 1]
                             K[l] = K[l] + k_[l][i, j]
 
-            string_kernel_current[(str(s), str(t), p, decay)] = (S, k_, K)
+    return S, K
 
-    return K
 
 # dynamic programming approach from this paper:
 # https://pdfs.semanticscholar.org/07f9/4059372818242a2d09a42580a827d2c77f73.pdf
@@ -577,9 +553,22 @@ def dynamic_programming_substring_kernel_k_efficient(s, t, p, decay, string_kern
 
     K = find_computed_kernel(s, t, p, decay, string_kernel_previous, string_kernel_current)
     if not K:
-        K = compute_kernel(s, t, p, decay, string_kernel_previous, string_kernel_current)
+        if len(s) >= 3 or len(t) >= 3:
+            # compute previous results
+            if len(s) == len(t):
+                val = string_kernel_previous[(str(s[:-1]), str(t[:-1]), p, decay)]
+            elif len(s) < len(t):
+                val = string_kernel_previous[(str(s), str(t[:-1]), p, decay)]
+            else:
+                val = string_kernel_previous[(str(s[:-1]), str(t), p, decay)]
+        else:
+            val = None
+        result = compute_kernel(s=s, t=t, p=p, decay=decay, val=val)
+        string_kernel_current[(str(s), str(t), p, decay)] = result
+        S, K = result
 
     return K
+
 
 # normalization like in the Lodhi et al. paper: K_norm(s,t) = K(s,t) / (sqrt(K(s,s) * K(t,t)))
 def lodhi_normalization(kernel_values, s, t, p, decay, string_kernel_previous, string_kernel_current):
@@ -828,21 +817,100 @@ def select_with_string_kernel_diversity(arr, scores, n, string_kernel_n, string_
 
 # String Kernel + DPP + Fast Greedy MAP Inference
 
+def find_previous_val(s, t, string_kernel_n, string_kernel_decay, string_kernel_previous):
+    len_s = len(s)
+    len_t = len(t)
+
+    # compute kernel
+    if len_s >= 3 or len_t >= 3:
+        # compute previous results
+        if len_s == len_t:
+            key = (str(s[:-1]), str(t[:-1]), string_kernel_n, string_kernel_decay)
+            if key in string_kernel_previous:
+                val = string_kernel_previous[key]
+            else:
+                # use symmetric result
+                val = string_kernel_previous[(str(t[:-1]), str(s[:-1]), string_kernel_n, string_kernel_decay)]
+                S = transpose_all_values(val[0])
+                val = S, val[1]
+        elif len_s < len_t:
+            key = (str(s), str(t[:-1]), string_kernel_n, string_kernel_decay)
+            if key in string_kernel_previous:
+                val = string_kernel_previous[key]
+            else:
+                # use symmetric result
+                val = string_kernel_previous[(str(t[:-1]), str(s), string_kernel_n, string_kernel_decay)]
+                S = transpose_all_values(val[0])
+                val = S, val[1]
+        else:
+            key = (str(s[:-1]), str(t), string_kernel_n, string_kernel_decay)
+            if key in string_kernel_previous:
+                val = string_kernel_previous[key]
+            else:
+                # use symmetric result
+                val = string_kernel_previous[(str(t), str(s[:-1]), string_kernel_n, string_kernel_decay)]
+                S = transpose_all_values(val[0])
+                val = S, val[1]
+    else:
+        val = None
+    return val
+
+
 # computes p.s.d. L matrix
-def compute_log_L(arr, scores, n, string_kernel_n, string_kernel_decay, string_kernel_weight,
-              string_kernel_previous, string_kernel_current, method1=True):
+def compute_log_L(arr, scores, n, string_kernel_n, string_kernel_decay, string_kernel_weight, string_kernel_previous,
+                  string_kernel_current, method1=True):
     num_hypotheses = len(arr)
     matrix = np.zeros((num_hypotheses, num_hypotheses))
     probs = scores - logsumexp(scores)
+
+
+    start = time.time()
+    process_pool = multiprocessing.Pool(4)
+    unnormalized_results = {}
+    indices_to_compute_K = []
+    arguments_to_compute_K = []
+    
+    start = time.time()
     for i in range(num_hypotheses):
-        for j in range(i+1, num_hypotheses):
-            kernel_values = dynamic_programming_substring_kernel_k_efficient(s=arr[i].trgt_sentence,
-                                                                             t=arr[j].trgt_sentence,
-                                                                             p=string_kernel_n,
-                                                                             decay=string_kernel_decay,
-                                                                             string_kernel_previous=string_kernel_previous,
-                                                                             string_kernel_current=string_kernel_current)
-            kernel_values = lodhi_normalization(kernel_values=kernel_values,
+        for j in range(i + 1, num_hypotheses):
+            s = arr[i].trgt_sentence
+            t = arr[j].trgt_sentence
+            # see if result has already been computed
+            kernel_values = find_computed_kernel(s=s, t=t, p=string_kernel_n, decay=string_kernel_decay,
+                                                 string_kernel_previous=string_kernel_previous,
+                                                 string_kernel_current=string_kernel_current)
+            if not kernel_values:
+                # hasn't been computed yet. need to compute it
+                indices_to_compute_K.append(((i,j), (s,t)))
+                # get the results from the previous time step that should be reused
+                val = find_previous_val(s, t, string_kernel_n, string_kernel_decay, string_kernel_previous)
+                # prepare the arguments for multiprocessing
+                arguments_to_compute_K.append((s, t, string_kernel_n, string_kernel_decay, val))
+            else:
+                # has already been computed
+                unnormalized_results[(i,j)] = kernel_values
+    print("preparation took: ", time.time()-start)
+
+    start = time.time()
+    # compute the kernel values
+    results_array = process_pool.starmap(compute_kernel, arguments_to_compute_K)
+    process_pool.close()
+    process_pool.join()
+    results_array = results_array
+    print("multiprocessing took: ", time.time()-start)
+
+    start = time.time()
+    # update string_kernel_current
+    for i in range(len(results_array)):
+        string_kernel_current[(str(indices_to_compute_K[i][1][0]), str(indices_to_compute_K[i][1][1]), string_kernel_n, string_kernel_decay)] = results_array[i]
+        unnormalized_results[indices_to_compute_K[i][0]] = results_array[i][1]
+    print("update: ", time.time() - start)
+
+    start = time.time()
+    # normalize the kernel values
+    for i in range(num_hypotheses):
+        for j in range(i + 1, num_hypotheses):
+            kernel_values = lodhi_normalization(kernel_values=unnormalized_results[(i, j)],
                                                 s=arr[i].trgt_sentence,
                                                 t=arr[j].trgt_sentence,
                                                 p=string_kernel_n, decay=string_kernel_decay,
@@ -850,8 +918,9 @@ def compute_log_L(arr, scores, n, string_kernel_n, string_kernel_decay, string_k
                                                 string_kernel_current=string_kernel_current)
 
             matrix[i][j] = np.mean(list(kernel_values.values()))
-
+    print("normalize: ", time.time() - start)
     matrix = matrix + np.transpose(matrix) + np.eye(matrix.shape[0])
+
     log_matrix = np.log(matrix*string_kernel_weight, where=matrix > 0)
     log_matrix[matrix == 0] = NEG_INF
     if TEST:
@@ -973,7 +1042,7 @@ def select_with_fast_greedy_map_inference(arr, scores, n, string_kernel_n, strin
         string_kernel_previous=string_kernel_previous, string_kernel_current=string_kernel_current)
     selected_indices = log_fast_greedy_map_inference(log_L, n)
     if TEST: 
-        K = compute_K(np.exp(L))
+        K = compute_K(np.exp(log_L))
         new_matrix = K[np.ix_(selected_indices, selected_indices)]
         print("New set probability:", np.linalg.det(new_matrix))
         print("Old set probability:", prod([K[i][i] for i in selected_indices]))
