@@ -369,28 +369,28 @@ def normalization_for_dynamic_programming_approach(K, decay):
 
 
 def find_computed_kernel(s, t, p, decay, string_kernel_previous, string_kernel_current):
-    if (str(s), str(t), p, decay) in string_kernel_current:
+    if (s, t, p, decay) in string_kernel_current:
         # result can be loaded from current time step
-        _, K = string_kernel_current[(str(s), str(t), p, decay)]
+        _, K = string_kernel_current[(s, t, p, decay)]
         return K
 
-    elif (str(t), str(s), p, decay) in string_kernel_current:
+    elif (t, s, p, decay) in string_kernel_current:
         # result can be loaded from current time step
-        _, K = string_kernel_current[(str(t), str(s), p, decay)]
+        _, K = string_kernel_current[(t, s, p, decay)]
         return K
 
-    elif (str(s), str(t), p, decay) in string_kernel_previous:
+    elif (s, t, p, decay) in string_kernel_previous:
         # result can be loaded from previous time step
         # this can happen if s and t had already reached EOS in the previous time step
-        S, K = string_kernel_previous[(str(s), str(t), p, decay)]
-        string_kernel_current[(str(s), str(t), p, decay)] = (S, K)
+        S, K = string_kernel_previous[(s, t, p, decay)]
+        string_kernel_current[(s, t, p, decay)] = (S, K)
         return K
 
-    elif (str(t), str(s), p, decay) in string_kernel_previous:
+    elif (t, s, p, decay) in string_kernel_previous:
         # result can be loaded from previous time step
         # this can happen if s and t had already reached EOS in the previous time step
-        S, K = string_kernel_previous[(str(t), str(s), p, decay)]
-        string_kernel_current[(str(s), str(t), p, decay)] = (S, K)
+        S, K = string_kernel_previous[(t, s, p, decay)]
+        string_kernel_current[(s, t, p, decay)] = (S, K)
         return K
 
 def compute_kernel(s, t, p, decay, val):
@@ -545,41 +545,43 @@ def compute_kernel(s, t, p, decay, val):
 # dynamic programming approach from this paper:
 # https://pdfs.semanticscholar.org/07f9/4059372818242a2d09a42580a827d2c77f73.pdf
 # optimized to reuse previous results
-def dynamic_programming_substring_kernel_k_efficient(s, t, p, decay, string_kernel_previous, string_kernel_current):
+def dynamic_programming_substring_kernel_k_efficient(hypo_s, hypo_t, p, decay, string_kernel_previous, string_kernel_current):
 
     if p < 1:
         print("the string kernel is only defined for positive values")
         exit(1)
 
-    K = find_computed_kernel(s, t, p, decay, string_kernel_previous, string_kernel_current)
+    K = find_computed_kernel(hypo_s.string_representation, hypo_t.string_representation, p, decay, string_kernel_previous, string_kernel_current)
     if not K:
-        if len(s) >= 3 or len(t) >= 3:
+        len_s = len(hypo_s.trgt_sentence)
+        len_t = len(hypo_t.trgt_sentence)
+        if len_s >= 3 or len_t >= 3:
             # compute previous results
-            if len(s) == len(t):
-                val = string_kernel_previous[(str(s[:-1]), str(t[:-1]), p, decay)]
+            if len_s == len_t:
+                val = string_kernel_previous[(hypo_s.string_representation_previous, hypo_t.string_representation_previous, p, decay)]
             elif len(s) < len(t):
-                val = string_kernel_previous[(str(s), str(t[:-1]), p, decay)]
+                val = string_kernel_previous[(hypo_s.string_representation, hypo_t.string_representation_previous, p, decay)]
             else:
-                val = string_kernel_previous[(str(s[:-1]), str(t), p, decay)]
+                val = string_kernel_previous[(hypo_s.string_representation_previous, hypo_t.string_representation, p, decay)]
         else:
             val = None
-        result = compute_kernel(s=s, t=t, p=p, decay=decay, val=val)
-        string_kernel_current[(str(s), str(t), p, decay)] = result
+        result = compute_kernel(s=hypo_s.trgt_sentence, t=hypo_t.trgt_sentence, p=p, decay=decay, val=val)
+        string_kernel_current[(hypo_s.string_representation, hypo_t.string_representation, p, decay)] = result
         S, K = result
 
     return K
 
 
 # normalization like in the Lodhi et al. paper: K_norm(s,t) = K(s,t) / (sqrt(K(s,s) * K(t,t)))
-def lodhi_normalization(kernel_values, s, t, p, decay, string_kernel_previous, string_kernel_current):
-    kernel_values_ss = dynamic_programming_substring_kernel_k_efficient(s, s, p, decay, string_kernel_previous,
+def lodhi_normalization(kernel_values, hypo_s, hypo_t, p, decay, string_kernel_previous, string_kernel_current):
+    kernel_values_ss = dynamic_programming_substring_kernel_k_efficient(hypo_s, hypo_s, p, decay, string_kernel_previous,
                                                                         string_kernel_current)
-    kernel_values_tt = dynamic_programming_substring_kernel_k_efficient(t, t, p, decay, string_kernel_previous,
+    kernel_values_tt = dynamic_programming_substring_kernel_k_efficient(hypo_t, hypo_t, p, decay, string_kernel_previous,
                                                                         string_kernel_current)
     results = {}
     for i in range(1, p+1):
         if kernel_values[i] == 0:
-            if s == t:
+            if hypo_s.trgt_sentence == hypo_t.trgt_sentence:
                 results[i] = 1
             else:
                 results[i] = 0
@@ -817,42 +819,38 @@ def select_with_string_kernel_diversity(arr, scores, n, string_kernel_n, string_
 
 # String Kernel + DPP + Fast Greedy MAP Inference
 
-def compute_kernel_multiprocessing(s, t, n, decay, val, return_dict, index_tuple):
-    return_dict[index_tuple] = compute_kernel(s, t, n, decay, val)
-
-
-def find_previous_val(s, t, string_kernel_n, string_kernel_decay, string_kernel_previous):
-    len_s = len(s)
-    len_t = len(t)
+def find_previous_val(hypo_s, hypo_t, string_kernel_n, string_kernel_decay, string_kernel_previous):
+    len_s = len(hypo_s.trgt_sentence)
+    len_t = len(hypo_t.trgt_sentence)
 
     # compute kernel
     if len_s >= 3 or len_t >= 3:
         # compute previous results
         if len_s == len_t:
-            key = (str(s[:-1]), str(t[:-1]), string_kernel_n, string_kernel_decay)
+            key = (hypo_s.string_representation_previous, hypo_t.string_representation_previous, string_kernel_n, string_kernel_decay)
             if key in string_kernel_previous:
                 val = string_kernel_previous[key]
             else:
                 # use symmetric result
-                val = string_kernel_previous[(str(t[:-1]), str(s[:-1]), string_kernel_n, string_kernel_decay)]
+                val = string_kernel_previous[(hypo_t.string_representation_previous, hypo_s.string_representation_previous, string_kernel_n, string_kernel_decay)]
                 S = transpose_all_values(val[0])
                 val = S, val[1]
         elif len_s < len_t:
-            key = (str(s), str(t[:-1]), string_kernel_n, string_kernel_decay)
+            key = (hypo_s.string_representation, hypo_t.string_representation_previous, string_kernel_n, string_kernel_decay)
             if key in string_kernel_previous:
                 val = string_kernel_previous[key]
             else:
                 # use symmetric result
-                val = string_kernel_previous[(str(t[:-1]), str(s), string_kernel_n, string_kernel_decay)]
+                val = string_kernel_previous[(hypo_t.string_representation_previous, hypo_s.string_representation, string_kernel_n, string_kernel_decay)]
                 S = transpose_all_values(val[0])
                 val = S, val[1]
         else:
-            key = (str(s[:-1]), str(t), string_kernel_n, string_kernel_decay)
+            key = (hypo_s.string_representation_previous, hypo_t.string_representation, string_kernel_n, string_kernel_decay)
             if key in string_kernel_previous:
                 val = string_kernel_previous[key]
             else:
                 # use symmetric result
-                val = string_kernel_previous[(str(t), str(s[:-1]), string_kernel_n, string_kernel_decay)]
+                val = string_kernel_previous[(hypo_t.string_representation, hypo_s.string_representation_previous, string_kernel_n, string_kernel_decay)]
                 S = transpose_all_values(val[0])
                 val = S, val[1]
     else:
@@ -867,63 +865,56 @@ def compute_log_L(arr, scores, n, string_kernel_n, string_kernel_decay, string_k
     matrix = np.zeros((num_hypotheses, num_hypotheses))
     probs = scores - logsumexp(scores)
 
-    # PROCESS: works. but let's see if it's faster with  pool.
+    process_pool = multiprocessing.Pool(4)
     unnormalized_results = {}
-    return_dict = multiprocessing.Manager().dict()
-    jobs = []
-
-
-    start = time.time()
-    # compute kernel values between all hypotheses
-    for i in range(num_hypotheses):
-        for j in range(i+1, num_hypotheses):
-            s = arr[i].trgt_sentence
-            t = arr[j].trgt_sentence
-            kernel_values = find_computed_kernel(s=s, t=t, p=string_kernel_n, decay=string_kernel_decay,
-                                                 string_kernel_previous=string_kernel_previous,
-                                                 string_kernel_current=string_kernel_current)
-
-            if not kernel_values:
-                # compute kernel
-                val = find_previous_val(s, t, string_kernel_n, string_kernel_decay, string_kernel_previous)
-                args = (s, t, string_kernel_n, string_kernel_decay, val, return_dict, (i, j))
-                job = multiprocessing.Process(target=compute_kernel_multiprocessing, args=args)
-                jobs.append(job)
-                job.start()
-            else:
-                unnormalized_results[(i, j)] = kernel_values
-
-    # wait for jobs to finish
-    for job in jobs:
-        job.join()
-
-    print("until after join: ", time.time()-start)
+    indices_to_compute_K = []
+    arguments_to_compute_K = []
     
     start = time.time()
-    # update string_kernel_current
     for i in range(num_hypotheses):
         for j in range(i + 1, num_hypotheses):
-            if (i,j) in return_dict.keys():
-                string_kernel_current[(str(arr[i].trgt_sentence), str(arr[j].trgt_sentence), string_kernel_n, string_kernel_decay)] = \
-                return_dict[(i,j)]
-                unnormalized_results[(i,j)] = return_dict[(i,j)][1]
-    print("update took: ", time.time()-start)
+            s = arr[i].trgt_sentence
+            t = arr[j].trgt_sentence
+            kernel_values = find_computed_kernel(s=arr[i].string_representation, t=arr[j].string_representation, 
+                                                 p=string_kernel_n, decay=string_kernel_decay,
+                                                 string_kernel_previous=string_kernel_previous,
+                                                 string_kernel_current=string_kernel_current)
+            if not kernel_values:
+                indices_to_compute_K.append(((i,j), (s,t)))
+                val = find_previous_val(arr[i], arr[j], string_kernel_n, string_kernel_decay, string_kernel_previous)
+                arguments_to_compute_K.append((s, t, string_kernel_n, string_kernel_decay, val))
+            else:
+                unnormalized_results[(i,j)] = kernel_values
+    print("preprocessing took: ", time.time()-start)
+
+    start = time.time()
+    results_array = process_pool.starmap(compute_kernel, arguments_to_compute_K)
+    process_pool.close()
+    process_pool.join()
+    results_array = results_array
+    print("multiprocessing took: ", time.time()-start)
+
+    start = time.time()
+    # update string_kernel_current
+    for i in range(len(results_array)):
+        string_kernel_current[(str(indices_to_compute_K[i][1][0]), str(indices_to_compute_K[i][1][1]), string_kernel_n, string_kernel_decay)] = results_array[i]
+        unnormalized_results[indices_to_compute_K[i][0]] = results_array[i][1]
+    print("update took: ", time.time() - start)
 
     start = time.time()
     # normalize the kernel values
     for i in range(num_hypotheses):
         for j in range(i + 1, num_hypotheses):
-            kernel_values = lodhi_normalization(kernel_values=unnormalized_results[(i,j)],
-                                                s=arr[i].trgt_sentence,
-                                                t=arr[j].trgt_sentence,
+            kernel_values = lodhi_normalization(kernel_values=unnormalized_results[(i, j)],
+                                                hypo_s=arr[i], hypo_t=arr[j],
                                                 p=string_kernel_n, decay=string_kernel_decay,
                                                 string_kernel_previous=string_kernel_previous,
                                                 string_kernel_current=string_kernel_current)
 
             matrix[i][j] = np.mean(list(kernel_values.values()))
-    print("normalize took: ", time.time()-start)
+    print("normalize took: ", time.time() - start)
     matrix = matrix + np.transpose(matrix) + np.eye(matrix.shape[0])
-    
+
     log_matrix = np.log(matrix*string_kernel_weight, where=matrix > 0)
     log_matrix[matrix == 0] = NEG_INF
     if TEST:

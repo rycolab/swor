@@ -84,6 +84,8 @@ class PartialHypothesis(object):
         self.score, self.base_score = 0.0, 0.0
         self.score_breakdown = []
         self.word_to_consume = None
+        self.string_representation = str(self.trgt_sentence)
+        self.string_representation_previous = None
 
 
     def __lt__(self, other):
@@ -123,6 +125,8 @@ class PartialHypothesis(object):
         new_hypo.score_breakdown = copy.copy(self.score_breakdown)
         new_hypo.score_breakdown.append(base_score if use_base else score)
         new_hypo.trgt_sentence = self.trgt_sentence + [word]
+        new_hypo.string_representation = str(new_hypo.trgt_sentence)
+        new_hypo.string_representation_previous = str(new_hypo.trgt_sentence[:-1])
         
         return new_hypo
 
