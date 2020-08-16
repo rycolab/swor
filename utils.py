@@ -367,26 +367,26 @@ def normalization_for_dynamic_programming_approach(K, decay):
 def find_computed_kernel(s, t, p, decay, string_kernel_previous, string_kernel_current):
     if (str(s), str(t), p, decay) in string_kernel_current:
         # result can be loaded from current time step
-        _, _, K = string_kernel_current[(str(s), str(t), p, decay)]
+        _, K = string_kernel_current[(str(s), str(t), p, decay)]
         return K
 
     elif (str(t), str(s), p, decay) in string_kernel_current:
         # result can be loaded from current time step
-        _, _, K = string_kernel_current[(str(t), str(s), p, decay)]
+        _, K = string_kernel_current[(str(t), str(s), p, decay)]
         return K
 
     elif (str(s), str(t), p, decay) in string_kernel_previous:
         # result can be loaded from previous time step
         # this can happen if s and t had already reached EOS in the previous time step
-        S, k_, K = string_kernel_previous[(str(s), str(t), p, decay)]
-        string_kernel_current[(str(s), str(t), p, decay)] = (S, k_, K)
+        S, K = string_kernel_previous[(str(s), str(t), p, decay)]
+        string_kernel_current[(str(s), str(t), p, decay)] = (S, K)
         return K
 
     elif (str(t), str(s), p, decay) in string_kernel_previous:
         # result can be loaded from previous time step
         # this can happen if s and t had already reached EOS in the previous time step
-        S, k_, K = string_kernel_previous[(str(t), str(s), p, decay)]
-        string_kernel_current[(str(s), str(t), p, decay)] = (S, k_, K)
+        S, K = string_kernel_previous[(str(t), str(s), p, decay)]
+        string_kernel_current[(str(s), str(t), p, decay)] = (S, K)
         return K
 
 def compute_kernel(s, t, p, decay, string_kernel_previous, string_kernel_current):
@@ -399,6 +399,8 @@ def compute_kernel(s, t, p, decay, string_kernel_previous, string_kernel_current
     # S stores intermediate results
     S = {}
 
+    decay_2 = decay ** 2
+
     if len(s) < 3 and len(t) < 3:
         # do not search for previous result
 
@@ -407,7 +409,7 @@ def compute_kernel(s, t, p, decay, string_kernel_previous, string_kernel_current
         for i in range(1, len(s) + 1):
             for j in range(1, len(t) + 1):
                 if s[i - 1] == t[j - 1]:
-                    k_[1][i, j] = decay ** 2
+                    k_[1][i, j] = decay_2
                     K[1] = K[1] + k_[1][i, j]
 
         if p > 1:
@@ -417,15 +419,11 @@ def compute_kernel(s, t, p, decay, string_kernel_previous, string_kernel_current
                 k_[l] = np.zeros((len(s) + 1, len(t) + 1))
                 for i in range(1, len(s) + 1):
                     for j in range(1, len(t) + 1):
-                        S[l][i, j] = k_[l - 1][i, j] + decay * S[l][i - 1, j] + decay * S[l][i, j - 1] - (decay ** 2) * S[l][
+                        S[l][i, j] = k_[l - 1][i, j] + decay * S[l][i - 1, j] + decay * S[l][i, j - 1] - decay_2 * S[l][
                             i - 1, j - 1]
                         if s[i - 1] == t[j - 1]:
-                            k_[l][i, j] = (decay ** 2) * S[l][i - 1, j - 1]
+                            k_[l][i, j] = decay_2 * S[l][i - 1, j - 1]
                             K[l] = K[l] + k_[l][i, j]
-
-            string_kernel_current[(str(s), str(t), p, decay)] = (S, k_, K)
-        else:
-            string_kernel_current[(str(s), str(t), p, decay)] = (None, k_, K)
 
     else:
         # can reuse results from previous time step
@@ -440,22 +438,21 @@ def compute_kernel(s, t, p, decay, string_kernel_previous, string_kernel_current
                     return compute_kernel(t, s, p, decay, string_kernel_previous, string_kernel_current)
 
             else:
-                previous_S, previous_k_, previous_K = string_kernel_previous[previous_key]
+                previous_S, previous_K = string_kernel_previous[previous_key]
 
                 # load k_[1] and K[1] from previous result
                 k_[1] = np.zeros((len(s) + 1, len(t) + 1))
-                k_[1][:-1, :-1] = previous_k_[1]
                 K[1] = previous_K[1]
 
                 for i in range(1, len(s)):
                     for j in [len(t)]:
                         if s[i - 1] == t[j - 1]:
-                            k_[1][i, j] = decay ** 2
+                            k_[1][i, j] = decay_2
                             K[1] = K[1] + k_[1][i, j]
                 for j in range(1, len(t) + 1):
                     for i in [len(s)]:
                         if s[i - 1] == t[j - 1]:
-                            k_[1][i, j] = decay ** 2
+                            k_[1][i, j] = decay_2
                             K[1] = K[1] + k_[1][i, j]
 
                 for l in range(2, p+1):
@@ -464,20 +461,19 @@ def compute_kernel(s, t, p, decay, string_kernel_previous, string_kernel_current
                     S[l] = np.zeros((len(s)+1, len(t)+1), dtype=np.double)
                     S[l][:-1, :-1] = previous_S[l]
                     k_[l] = np.zeros((len(s)+1, len(t)+1))
-                    k_[l][:-1, :-1] = previous_k_[l]
 
                     for i in range(1, len(s)):
                         for j in [len(t)]:
-                            S[l][i, j] = k_[l-1][i, j] + decay * S[l][i-1, j] + decay * S[l][i, j-1] - (decay ** 2) * S[l][i-1, j-1]
+                            S[l][i, j] = k_[l-1][i, j] + decay * S[l][i-1, j] + decay * S[l][i, j-1] - decay_2 * S[l][i-1, j-1]
                             if s[i-1] == t[j-1]:
-                                k_[l][i, j] = (decay ** 2) * S[l][i-1, j-1]
+                                k_[l][i, j] = decay_2 * S[l][i-1, j-1]
                                 K[l] = K[l] + k_[l][i, j]
                     for j in range(1, len(t) + 1):
                         for i in [len(s)]:
                             S[l][i, j] = k_[l - 1][i, j] + decay * S[l][i - 1, j] + decay * S[l][i, j - 1] \
-                                         - (decay ** 2) * S[l][i - 1, j - 1]
+                                         - decay_2 * S[l][i - 1, j - 1]
                             if s[i - 1] == t[j - 1]:
-                                k_[l][i, j] = (decay ** 2) * S[l][i - 1, j - 1]
+                                k_[l][i, j] = decay_2 * S[l][i - 1, j - 1]
                                 K[l] = K[l] + k_[l][i, j]
 
                 string_kernel_current[(str(s), str(t), p, decay)] = (S, k_, K)
@@ -492,17 +488,16 @@ def compute_kernel(s, t, p, decay, string_kernel_previous, string_kernel_current
                 else: 
                     return compute_kernel( t, s, p, decay, string_kernel_previous, string_kernel_current)
 
-            previous_S, previous_k_, previous_K = string_kernel_previous[previous_key]
+            previous_S, previous_K = string_kernel_previous[previous_key]
 
             # load k_[1] and K[1] from previous result
             k_[1] = np.zeros((len(s) + 1, len(t) + 1))
-            k_[1][:-1, :] = previous_k_[1]
             K[1] = previous_K[1]
 
             for j in range(1, len(t) + 1):
                 for i in [len(s)]:
                     if s[i - 1] == t[j - 1]:
-                        k_[1][i, j] = decay ** 2
+                        k_[1][i, j] = decay_2
                         K[1] = K[1] + k_[1][i, j]
 
             for l in range(2, p + 1):
@@ -511,14 +506,13 @@ def compute_kernel(s, t, p, decay, string_kernel_previous, string_kernel_current
                 S[l] = np.zeros((len(s) + 1, len(t) + 1), dtype=np.double)
                 S[l][:-1, :] = previous_S[l]
                 k_[l] = np.zeros((len(s) + 1, len(t) + 1))
-                k_[l][:-1, :] = previous_k_[l]
 
                 for j in range(1, len(t) + 1):
                     for i in [len(s)]:
                         S[l][i, j] = k_[l - 1][i, j] + decay * S[l][i - 1, j] + decay * S[l][i, j - 1] \
-                                     - (decay ** 2) * S[l][i - 1, j - 1]
+                                     - decay_2 * S[l][i - 1, j - 1]
                         if s[i - 1] == t[j - 1]:
-                            k_[l][i, j] = (decay ** 2) * S[l][i - 1, j - 1]
+                            k_[l][i, j] = decay_2 * S[l][i - 1, j - 1]
                             K[l] = K[l] + k_[l][i, j]
 
             string_kernel_current[(str(s), str(t), p, decay)] = (S, k_, K)
@@ -533,17 +527,16 @@ def compute_kernel(s, t, p, decay, string_kernel_previous, string_kernel_current
                 else: 
                     return compute_kernel(t, s, p, decay, string_kernel_previous, string_kernel_current)
 
-            previous_S, previous_k_, previous_K = string_kernel_previous[previous_key]
+            previous_S, previous_K = string_kernel_previous[previous_key]
 
             # load k_[1] and K[1] from previous result
             k_[1] = np.zeros((len(s) + 1, len(t) + 1))
-            k_[1][:, :-1] = previous_k_[1]
             K[1] = previous_K[1]
 
             for i in range(1, len(s) + 1):
                 for j in [len(t)]:
                     if s[i - 1] == t[j - 1]:
-                        k_[1][i, j] = decay ** 2
+                        k_[1][i, j] = decay_2
                         K[1] = K[1] + k_[1][i, j]
 
             for l in range(2, p + 1):
@@ -552,17 +545,16 @@ def compute_kernel(s, t, p, decay, string_kernel_previous, string_kernel_current
                 S[l] = np.zeros((len(s) + 1, len(t) + 1), dtype=np.double)
                 S[l][:, :-1] = previous_S[l]
                 k_[l] = np.zeros((len(s) + 1, len(t) + 1))
-                k_[l][:, :-1] = previous_k_[l]
 
                 for i in range(1, len(s) + 1):
                     for j in [len(t)]:
-                        S[l][i, j] = k_[l - 1][i, j] + decay * S[l][i - 1, j] + decay * S[l][i, j - 1] - (decay ** 2) * \
+                        S[l][i, j] = k_[l - 1][i, j] + decay * S[l][i - 1, j] + decay * S[l][i, j - 1] - decay_2 * \
                                      S[l][i - 1, j - 1]
                         if s[i - 1] == t[j - 1]:
-                            k_[l][i, j] = (decay ** 2) * S[l][i - 1, j - 1]
+                            k_[l][i, j] = decay_2 * S[l][i - 1, j - 1]
                             K[l] = K[l] + k_[l][i, j]
 
-            string_kernel_current[(str(s), str(t), p, decay)] = (S, k_, K)
+    string_kernel_current[(str(s), str(t), p, decay)] = (S, K)
 
     return K
 

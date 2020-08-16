@@ -39,3 +39,48 @@ assert(dynamic_programming_substring_kernel_k([1,2,3,5], [1,2,3,4,5], 3, decay)[
        dynamic_programming_substring_kernel_k([1,7,8,9], [1,2,3,4,5], 3, decay)[3])
 
 
+s_ = [1]
+t_ = [2]
+current_state = {}
+iteration = 0
+for i in [1, 2, 3, 4, 5, 6]:
+    iteration += 1
+    previous_state = current_state
+    current_state = {}
+    kernel_values = dynamic_programming_substring_kernel_k_efficient(s_, t_, p, decay, previous_state, current_state)
+    test_values = dynamic_programming_substring_kernel_k(s_, t_, p, decay)
+    if kernel_values != test_values:
+        print("Iteration ", iteration)
+        print("kernel_values: ", kernel_values)
+        print("test_values: ", test_values)
+    assert(kernel_values == test_values)
+    s_.append(i)
+    t_.append(i)
+
+
+s_ = [1]
+t_ = [2]
+current_state = {}
+for i in [1, 2, 3, 4, 5, 6]:
+    previous_state = current_state
+    current_state = {}
+    kernel_values = dynamic_programming_substring_kernel_k_efficient(s_, t_, p, decay, previous_state, current_state)
+    test_values = dynamic_programming_substring_kernel_k(s_, t_, p, decay)
+    assert(kernel_values == test_values)
+    t_.append(i)
+
+
+s_ = [1]
+t_ = [2]
+current_state = {}
+for i in [1, 2, 3, 4, 5, 6]:
+    previous_state = current_state
+    current_state = {}
+    kernel_values = dynamic_programming_substring_kernel_k_efficient(s_, t_, p, decay, previous_state, current_state)
+    test_values = dynamic_programming_substring_kernel_k(s_, t_, p, decay)
+    assert(kernel_values == test_values)
+    s_.append(i)
+
+print("Tests successful.")
+
+
