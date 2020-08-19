@@ -49,17 +49,24 @@ def sample_k_dpp(lambdas, k, seed=0):
                 break
     return J
 
-def log_sample_k_dpp(log_lambdas, k, seed=0):
+def log_sample_k_dpp(log_lambdas, k, seed=0, include_last=False):
+    np.random.seed(seed=seed)
     N = len(log_lambdas)
     if k >= N:
         return range(N), 0., [0.]*N
-    np.random.seed(seed=seed)
-    J = []
+    
     log_E = log_elem_polynomials(log_lambdas, k)
     inc_probs = inclusion_probs(log_lambdas, k, log_E)
     a = log_lambdas[inc_probs > 0.]
     if not a.size == 0:
         logging.warn("Experiencing some numerical instability.")
+    J = []
+    if include_last:
+        J.append(N-1)
+        N -= 1
+        k -= 1
+        if k == 0:
+            return J, log_beam_prob(log_lambdas, log_E, J), inc_probs
 
     for n in range(N,0,-1):
         u = np.random.uniform()
@@ -69,7 +76,7 @@ def log_sample_k_dpp(log_lambdas, k, seed=0):
             k -= 1
             if k == 0:
                 break
-    
+
     return J, log_beam_prob(log_lambdas, log_E, J), inc_probs
 
 def log_sample_poisson(log_lambdas, k=1, normalize=True, seed=0):
@@ -84,7 +91,6 @@ def log_sample_poisson(log_lambdas, k=1, normalize=True, seed=0):
         u = np.random.uniform() 
         if np.log(u) < l:
             J.append(i)
-    #print(len(J))
     return J, inc_probs
 
 def log_beam_prob(log_lambdas, log_E, beam):

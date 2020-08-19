@@ -238,6 +238,12 @@ def log_minus(x, y):
     else:
         return x + log1mexp(y-x)
 
+def logf(n):
+    n += 1
+    return (n - 0.5) * np.log(n) - n + 0.5 * np.log(2 * np.pi) + 1/(12 * n)
+
+def log_comb(n,r):
+    return logf(n) - logf(n - r) - logf(r)
 
 def log_add_old(a, b):
     # takes two log probabilities; equivalent to adding probabilities in log space
