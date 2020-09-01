@@ -30,7 +30,7 @@ class DummyPredictor(Predictor):
         self.num_dists = 1000
         self.model_temperature = 0.5
         # Create fake distributions with random number generator
-        self.prob_dists = [self.rg.standard_normal(self.vocab_size) for i in range(self.num_dists)]
+        self.prob_dists = [self.rg.uniform(size=self.vocab_size) for i in range(self.num_dists)]
 
     def get_unk_probability(self, posterior):
         """Fetch posterior[utils.UNK_ID]"""
@@ -41,7 +41,7 @@ class DummyPredictor(Predictor):
         hash_key = int(hashlib.sha256(hash_rep.encode('utf-8')).hexdigest(), 16) 
         dist_key = hash_key % self.num_dists
         unnorm_posterior = copy.copy(self.prob_dists[dist_key])
-        #unnorm_posterior[self.eos_id] -= unnorm_posterior.max()/max(len(self.consumed),1)
+        unnorm_posterior[utils.EOS_ID] += unnorm_posterior.max()/max(len(self.src)*2 -len(self.consumed),1)
         return utils.log_softmax(unnorm_posterior, temperature=self.model_temperature)
     
     def initialize(self, src_sentence):

@@ -162,3 +162,17 @@ class DiverseBeamDecoder(BeamDecoder):
         other_hypos = utils.as_ndarray(set2, min_length=longest_hypo)
         return np.apply_along_axis(lambda x: utils.hamming_distance(x, other_hypos), 1, hypos)
 
+    @staticmethod
+    def add_args(parser):
+        parser.add_argument("--diversity_groups", default=1, type=int,
+                       help="If this is greater than one, promote diversity "
+                       "between groups of hypotheses as in Vijayakumar et. "
+                       "al. (2016). Only compatible with 'diverse_beam' decoder. "
+                       "They found diversity_groups = beam size to be most "
+                       "effective.")
+        parser.add_argument("--diversity_reward", default=0.5, type=float,
+                           help="If this is greater than zero, add reward for diversity "
+                           "between groups as in Vijayakumar et. al. (2016). Only "
+                           "compatible with 'diverse_beam' decoder. Setting value "
+                           "equal to 0 recovers standard beam search.")
+

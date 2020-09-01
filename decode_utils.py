@@ -37,6 +37,7 @@ import utils
 import decoding
 import output
 import predictors
+import estimators
 
 
 args = None
@@ -96,7 +97,7 @@ def add_predictor(decoder):
             This method will add predictors to this instance with
             ``add_predictor()``
     """
-    preds = utils.split_comma(args.predictors)
+    preds = utils.split_comma(args.predictor)
     if not preds:
         logging.fatal("Require at least one predictor! See the --predictors "
                       "argument for more information.")
@@ -186,6 +187,10 @@ def create_output_handlers():
                           " the --outputs parameter." % name)
     return outputs
 
+def create_estimator():
+    if not args.estimator:
+        return None
+    return estimators.ESTIMATOR_REGISTRY[args.estimator](args)
 
 def get_sentence_indices(range_param, src_sentences):
     """Helper method for ``do_decode`` which returns the indices of the
@@ -292,6 +297,8 @@ def do_decode(decoder,
               output_handlers, 
               src_sentences,
               trgt_sentences=None,
+              estimator=None,
+              iterations=1,
               num_log=1):
     """This method contains the main decoding loop. It iterates through
     ``src_sentences`` and applies ``decoder.decode()`` to each of them.
@@ -320,6 +327,9 @@ def do_decode(decoder,
     sen_indices = []
     diversity_metrics = []
     not_full = 0
+    num_iterations = iterations if estimator and not decoder.is_deterministic() else 1
+    
+    estimates = []
 
     for sen_idx in get_sentence_indices(args.range, src_sentences):
         decoder.set_current_sen_id(sen_idx)
@@ -331,34 +341,54 @@ def do_decode(decoder,
             src_print = io_utils.src_sentence(src)
             logging.info("Next sentence (ID: %d): %s" % (sen_idx + 1, src_print))
             src = io_utils.encode(src)
-            start_hypo_time = time.time()
-            decoder.apply_predictor_count = 0
-            if trgt_sentences:
-                hypos = decoder.decode(src, io_utils.encode_trg(trgt_sentences[sen_idx]))
-            else:
-                hypos = decoder.decode(src)
-            if not hypos:
-                logging.error("No translation found for ID %d!" % (sen_idx+1))
-                logging.info("Stats (ID: %d): score=<not-found> "
-                         "num_expansions=%d "
-                         "time=%.2f" % (sen_idx+1,
-                                        decoder.apply_predictor_count,
-                                        time.time() - start_hypo_time))
-                hypos = [_generate_dummy_hypo()]
-            
-            hypos = _postprocess_complete_hypos(hypos)
-            for logged_hypo in hypos[:num_log]:
-                logging.info("Decoded (ID: %d): %s" % (
-                            sen_idx+1,
-                            io_utils.decode(logged_hypo.trgt_sentence)))
-                logging.info("Stats (ID: %d): score=%f "
+            sen_estimates = []
+
+            for i in range(num_iterations):
+                start_hypo_time = time.time()
+                decoder.apply_predictor_count = 0
+                decoder.seed=i
+                if decoder.name == "reference":
+                    hypos = decoder.decode(src, io_utils.encode_trg(trgt_sentences[sen_idx]))
+                else:
+                    hypos = decoder.decode(src)
+                if not hypos:
+                    logging.error("No translation found for ID %d!" % (sen_idx+1))
+                    logging.info("Stats (ID: %d): score=<not-found> "
                              "num_expansions=%d "
-                             "time=%.2f " 
-                             "perplexity=%.2f"% (sen_idx+1,
-                                            logged_hypo.total_score,
+                             "time=%.2f" % (sen_idx+1,
                                             decoder.apply_predictor_count,
-                                            time.time() - start_hypo_time,
-                                            utils.perplexity(logged_hypo.score_breakdown)))
+                                            time.time() - start_hypo_time))
+                    hypos = [_generate_dummy_hypo()]
+                
+                hypos = _postprocess_complete_hypos(hypos)
+                for logged_hypo in hypos[:num_log]:
+                    logging.info("Decoded (ID: %d): %s" % (
+                                sen_idx+1,
+                                io_utils.decode(logged_hypo.trgt_sentence)))
+                    logging.info("Stats (ID: %d): score=%f "
+                                 "num_expansions=%d "
+                                 "time=%.2f " 
+                                 "perplexity=%.2f"% (sen_idx+1,
+                                                logged_hypo.total_score,
+                                                #logged_hypo.base_score if logged_hypo.base_score else logged_hypo.total_score,
+                                                decoder.apply_predictor_count,
+                                                time.time() - start_hypo_time,
+                                                utils.perplexity(logged_hypo.score_breakdown)))
+                if estimator:
+                    container = []
+                    kau = min(hypos).total_score if decoder.gumbel else None
+                    for h in hypos:
+                        if kau and h.total_score <= kau:
+                            continue
+                        inc_prob = decoder.get_inclusion_prob_estimate(src, h, kau=kau)
+                        model_prob = h.base_score if h.base_score else h.total_score
+                        val = estimator.add_value(h, model_prob - inc_prob, 
+                            ref=trgt_sentences[sen_idx] if trgt_sentences else None)
+                        container.append((model_prob - inc_prob, val))
+                    logging.info("Estimator value: %.5f" % (estimator.estimate()))
+                    estimator.reset()
+                    sen_estimates.append(container)
+
 
             if score_output_handler:
                 try:
@@ -375,9 +405,11 @@ def do_decode(decoder,
 
                 if len(hypos) < decoder.nbest:
                     not_full += 1
+
             
             all_hypos.append(hypos)
             sen_indices.append(sen_idx)
+            estimates.append(sen_estimates)
             try:
                 # Write text output as we go
                 if text_output_handler:
@@ -410,7 +442,13 @@ def do_decode(decoder,
             except IOError as e:
                 logging.error("I/O error %d occurred when creating output files: %s"
                             % (sys.exc_info()[0], e))
-
+    if estimator:
+        file_name = decoder.name  + '_' + args.fairseq_lang_pair + '_' + estimator.name + '_' +str(args.range) + '_' + str(args.nbest)
+        if hasattr(args, 'inc_prob_estimate_rounds'):
+            file_name += '_' + str(args.inc_prob_estimate_rounds)
+        file_name +=  '.out'
+        with open(file_name, 'w') as f:
+            f.write('\n'.join([str(x) for x in estimates]))
 
     logging.info("Decoding finished. Time: %.2f" % (time.time() - start_time))
     if decoder.nbest > 1:

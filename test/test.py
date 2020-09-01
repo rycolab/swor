@@ -36,6 +36,7 @@ import string
 import collections
 
 import utils
+import scipy
 import sampling_utils
 import decoding
 
@@ -196,19 +197,128 @@ def do_decode_swor(decoder,
               src_sentences,
               trgt_sentences=None,
               num_log=1):
+    args.decoder = "inclusion"
+    inc_decoder = create_decoder()
     
     src_sentences, all_hypos = do_decode(decoder, output_handlers, src_sentences, trgt_sentences, num_log=num_log)
     all_trgt_sens = [[tuple(h.trgt_sentence) for h in hypos] for hypos in all_hypos]
     for s, hypos in zip(src_sentences, all_trgt_sens):
         if len(hypos) != len(set(hypos)):
             logging.error("Not unique set for sentence %s; found %d duplicates." % (str(s), len(hypos) - len(set(hypos))))
+        if hypos:
+            for i in range(5):
+                print(inc_decoder.decode(s,list(hypos[-1]), seed=i))
+            print('----')
     for hypos in all_hypos:
         for h in hypos:
             if h.total_score > sum(h.score_breakdown) and not decoder.gumbel:
                 logging.error("Computation error. Adjusted score greater than original score for sentence %s" % str(s))
 
+def test_cp_decode(decoder, 
+              output_handlers, 
+              src_sentences,
+              trgt_sentences=None,
+              test_str_length=5,
+              num_log=1):
+    """This method contains the main decoding loop. It iterates through
+    ``src_sentences`` and applies ``decoder.decode()`` to each of them.
+    At the end, it calls the output handlers to create output files.
+    
+    Args:
+        decoder (Decoder):  Current decoder instance
+        output_handlers (list):  List of output handlers, see
+                                 ``create_output_handlers()``
+        src_sentences (list):  A list of strings. The strings are the
+                               source sentences with word indices to 
+                               translate (e.g. '1 123 432 2')
+    """
+    if not decoder.has_predictor():
+        logging.fatal("Terminated due to an error in the "
+                      "predictor configuration.")
+        return
+    all_hypos = []
+    
+    start_time = time.time()
+    logging.info("Start time: %s" % start_time)
+    src = randomString(test_str_length)
+
+    counts = collections.defaultdict(int)
+    stats = {}
+
+    num_trials = 1000
+    for sen_idx in range(num_trials):
+        decoder.set_current_sen_id(sen_idx)
+        logging.info("Next sentence (ID: %d): %s" % (sen_idx + 1, ''.join(src)))
+        decoder.apply_predictors_count = 0
+        start_hypo_time = time.time()
+        hypos = decoder.decode(src, seed=sen_idx)
+        all_hypos.append(hypos)
+        if not hypos:
+            logging.error("No translation found for ID %d!" % (sen_idx+1))
+            logging.info("Stats (ID: %d): score=<not-found> "
+                     "num_expansions=%d "
+                     "time=%.2f" % (sen_idx+1,
+                                    decoder.apply_predictor_count,
+                                    time.time() - start_hypo_time))
+            hypos = [_generate_dummy_hypo()]
+        else:
+
+            assert len(hypos) <= decoder.nbest
+
+            for h in hypos:
+                counts[tuple(h.trgt_sentence)] += 1
+                stats[tuple(h.trgt_sentence)] = h.score_breakdown
+            
+            for logged_hypo in sorted(hypos, reverse=True)[:num_log]:
+                logging.info("Decoded (ID: %d): %s" % (
+                        sen_idx+1,
+                        logged_hypo.trgt_sentence))
+                logging.info("Stats (ID: %d): score=%f "
+                            "inc=%f "
+                             "num_expansions=%d "
+                             "time=%.2f " 
+                             "perplexity=%.2f"% (sen_idx+1,
+                                            logged_hypo.total_score,
+                                            logged_hypo.base_score,
+                                            decoder.apply_predictors_count,
+                                            time.time() - start_hypo_time,
+                                            utils.perplexity(logged_hypo.score_breakdown)))
+        
+    args.decoder = "inclusion"
+    inc_decoder = create_decoder()
+    diffs1 = []
+    for k,v in counts.items():
+        #if v > 2:
+            probs = []
+            for i in range(50):
+                probs.append(inc_decoder.decode(src,list(k), seed=i))
+            # inv_inc_prob = utils.logsumexp(probs)
+            # log_num_beams = utils.log_comb((decoder.nbest-1)**decoder.max_len, decoder.nbest - 1)
+            # guess = np.exp(inv_inc_prob - log_num_beams - np.log(len(probs)))
+            print(k)
+            guess = np.exp(utils.logsumexp(probs) - np.log(len(probs)))
+            print(guess, v/num_trials)
+            #print(np.mean(probs[k]) - v/num_trials, np.mean(probs[k]), v/num_trials, np.exp(bprob[k]), np.exp(stats[k]), np.var(probs[k]))
+            #print(probs)
+            #print(stats[k])
+            
+            diffs1.append(abs( guess - v/num_trials))
+    print(diffs1)
+    print(np.mean(diffs1))
+    return src_sentences
+
+
 def test_utils():
     from arsenal.maths import assert_equal
+    from scipy.special import binom
+
+    for i in range(10):
+        N = np.random.randint(2,50)
+        k = np.random.randint(1,N)
+        min_fac = min(N-k, k)
+        # print(abs(np.exp(utils.log_comb(N,k)) - binom(N,k)))
+        # print(3/(360*(min_fac)**3))
+        # assert abs(np.exp(utils.log_comb(N,k)) - binom(N,k)) < 3/(12*(min_fac+1))
 
     for a,b in np.random.uniform(0, 10, size=(100, 2)):
 
@@ -271,8 +381,12 @@ if not args.decoder:
     exit(0)
 
 decoder = create_decoder()
+
 if 'swor' in args.decoder or args.gumbel:
-    do_decode_swor(decoder, [], False, num_log=args.num_log)
+    if args.decoder == 'cp_swor':
+        test_cp_decode(decoder, [], False, num_log=args.num_log)
+    else:
+        do_decode_swor(decoder, [], False, num_log=args.num_log)
 else:
     if args.beam <= 0:
         logging.warn("Using beam size <= 0. Decoding may not terminate")

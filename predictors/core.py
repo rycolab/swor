@@ -43,6 +43,10 @@ class Predictor(Observer):
         super(Predictor, self).__init__()
         self.current_sen_id = 0
 
+    @staticmethod
+    def add_args(parser):
+        pass
+
     def set_current_sen_id(self, cur_sen_id):
         """This function is called between ``initialize()`` calls to 
         increment the sentence id counter. It can also be used to skip 

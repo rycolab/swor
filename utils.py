@@ -5,9 +5,11 @@ import os
 import sys
 from bisect import bisect_left 
 from functools import reduce  
+import sacrebleu
 
 import numpy as np
 from scipy.special import logsumexp
+import runstats
 
 # Reserved IDs
 GO_ID = 1
@@ -161,10 +163,16 @@ def as_ndarray(X, pad=-1, min_length=0):
     longest = max(len(max(X, key=len)), min_length)
     return np.array([i + [pad]*(longest-len(i)) for i in X])
 
-def logmexp(x):
+def logmexp(x, ignore_zero=False):
+    if ignore_zero:
+        with np.errstate(divide='ignore'):
+            return np.log1p(-np.exp(x))
     return np.log1p(-np.exp(x))
 
-def logpexp(x):
+def logpexp(x, ignore_zero=False):
+    if ignore_zero:
+        with np.errstate(divide='ignore'):
+            return np.log1p(np.exp(x))
     return np.log1p(np.exp(x))
 
 def logsigmoid(x):
@@ -172,6 +180,20 @@ def logsigmoid(x):
     log(sigmoid(x)) = -log(1+exp(-x)) = -log1pexp(-x)
     """
     return -log1pexp(-x)
+
+def signed_log_add(x, y, sign_x, sign_y):
+    a,b = x,y
+    sign_a, sign_b = sign_x, sign_y
+    if y > x:
+        a,b = y,x
+        sign_a, sign_b = sign_y,sign_x
+
+    if sign_a != sign_b:
+        val = log_minus(a,b)
+    else:
+        val = log_add(a,b)
+
+    return sign_a, val
 
 
 def log1pexp(x):
@@ -423,6 +445,31 @@ def hamming_distance(hypo, other_hypos, pad=-1):
 
     else:
         logging.warn("No implementation for type: "+ str(type(other_hypos)))
+
+
+def sentence_bleu(sentence, reference, detokenizer=None):
+    """
+    Utility function for calculating sentence BLEU. 
+    Expects sentence and reference as list of tokens.
+    Reference may be list of multiple references
+    """
+    if not isinstance(reference[0], list):
+        reference = [reference]
+    if detokenizer is not None:
+        sentence = detokenizer(sentence.split())
+        reference = [detokenizer(r.split()) for r in reference]
+
+    return sacrebleu.sentence_bleu(sentence, [reference]).score
+
+def entropy(distribution, base=np.e):
+    return -sum(distribution*np.log(distribution, base=base))
+
+def log_entropy(log_distribution, base=np.e):
+    return -sum(base**log_distribution * log_distribution)
+
+def stats_keeper():
+    return runstats.Statistics()
+
 
 
 MESSAGE_TYPE_DEFAULT = 1

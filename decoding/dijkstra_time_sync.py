@@ -156,5 +156,12 @@ class DijkstraTSDecoder(Decoder):
             return True
         return False
 
+    @staticmethod
+    def add_args(parser):
+        parser.add_argument("--memory_threshold_coef", default=0, type=int,
+                        help="total queue size will be set to `memory_threshold_coef`"
+                         "* beam size. When capacity is exceeded, the worst scoring "
+                         "hypothesis from the earliest time step will be discarded")
+
     
         

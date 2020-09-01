@@ -106,6 +106,7 @@ class SGNMTPrompt(Cmd):
 io_utils.initialize(args)
 decoder = decode_utils.create_decoder()
 outputs = decode_utils.create_output_handlers()
+estimator = decode_utils.create_estimator()
 
 if args.input_method == 'file':
     if os.access(args.src_test, os.R_OK):
@@ -119,6 +120,8 @@ if args.input_method == 'file':
                                    outputs,
                                    [line.strip() for line in f],
                                    trgt,
+                                   estimator,
+                                   args.estimator_iterations,
                                    args.num_log)
         print(time.time())
     else:
@@ -126,11 +129,13 @@ if args.input_method == 'file':
                       "src_test option or choose an alternative input_method."
                       % args.src_test)
 elif args.input_method == 'dummy':
-    decode_utils.do_decode(decoder, outputs, False)
+    decode_utils.do_decode(decoder, outputs, False, estimator, args.estimator_iterations)
 elif args.input_method == "stdin":
     decode_utils.do_decode(decoder,
                            outputs,
-                           [line.strip() for line in sys.stdin])
+                           [line.strip() for line in sys.stdin],
+                           estimator,
+                           args.estimator_iterations)
 else: # Interactive mode: shell
     print("Starting interactive mode...")
     print("PID: %d" % os.getpid())

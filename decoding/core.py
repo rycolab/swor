@@ -147,7 +147,7 @@ class PartialHypothesis(object):
         """
         return self._new_partial_hypo(new_states, word, score, score_breakdown)
     
-    def cheap_expand(self, word, score, base_score=None, breakdown=None):
+    def cheap_expand(self, word, score, base_score=None, breakdown=None, states=None):
         """Creates a new partial hypothesis adding a new word to the
         translation prefix with given probability. Does NOT update the
         predictor states but adds a flag which signals that the last 
@@ -164,7 +164,7 @@ class PartialHypothesis(object):
             score_breakdown (list): Predictor score breakdown for
                                     the new word
         """
-        hypo = self._new_partial_hypo(self.predictor_states,
+        hypo = self._new_partial_hypo(states,
                                      int(word), score,
                                      base_score=base_score,
                                      breakdown=breakdown)
@@ -264,10 +264,26 @@ class Decoder(Observable):
         self.apply_predictor_count = 0
         self.temperature = decoder_args.temperature
         self.add_incomplete = decoder_args.add_incomplete
+        self.seed=0
          # score function will be monotonic without modifications to scoring function;
          # currently, modified objectives are not implemented in this library. Can
          # bring them back if wanted
         self.not_monotonic = False
+
+    @staticmethod
+    def add_args(parser):
+        """Add task-specific arguments to the parser."""
+        pass
+        
+    def is_deterministic(self):
+        return not self.gumbel
+
+    def get_inclusion_prob_estimate(self, src, hypo, kau=None, **kwargs):
+        if self.gumbel:
+            assert kau is not None
+            zet = np.exp(hypo.base_score - kau)
+            return hypo.base_score - kau - zet/2 + (zet**2)/24 - (zet**4)/2880 
+        return hypo.total_score
 
     def add_predictor(self, name, predictor):
         """Adds a predictor to the decoder. This means that this 
@@ -402,17 +418,17 @@ class Decoder(Observable):
 
 
     def gumbelify(self, hypo, posterior):
+        np.random.seed(seed=self.seed)
         vf = np.vectorize(lambda x: self.get_pos_score(hypo, x) - self.get_adjusted_score(hypo))
         shifted_posterior = vf(posterior)
         shifted_posterior = utils.log_softmax(shifted_posterior)
-
-        np.random.seed(seed=0)
+        
         gumbels = np.random.gumbel(loc=0, scale=1, size=shifted_posterior.shape)
         gumbel_posterior = shifted_posterior + gumbels + hypo.base_score
         Z = np.max(gumbel_posterior)
 
-        v = hypo.score - gumbel_posterior + utils.logmexp(gumbel_posterior - Z)
-        gumbel_full_posterior = hypo.score - np.maximum(0, v) - utils.logpexp(-np.abs(v))
+        v = hypo.score - gumbel_posterior + utils.logmexp(gumbel_posterior - Z, ignore_zero=True)
+        gumbel_full_posterior = hypo.score - np.maximum(0, v) - utils.logpexp(-np.abs(v), ignore_zero=True)
 
         # make sure invalid tokens still have neg inf log probability
         gumbel_full_posterior[(posterior == utils.NEG_INF).nonzero()] == utils.NEG_INF
@@ -428,20 +444,20 @@ class Decoder(Observable):
         Returns:
             list. List of child hypotheses
         """
-
         self.set_predictor_states(copy.deepcopy(hypo.predictor_states))
         if not hypo.word_to_consume is None: # Consume if cheap expand
             self.consume(hypo.word_to_consume)
             hypo.word_to_consume = None
 
         ids, posterior, original_posterior = self.apply_predictor(hypo, limit)
-
-        hypo.predictor_states = self.get_predictor_states()
+        #assert hypo.predictor_states != self.get_predictor_states()
+        new_states = self.get_predictor_states()
         new_hypos = [hypo.cheap_expand(
                         trgt_word,
                         posterior[idx] if self.gumbel else posterior[idx] + hypo.score,
                         base_score=original_posterior[idx] + hypo.base_score if self.gumbel else hypo.base_score,
-                        breakdown=original_posterior[idx] if self.gumbel else posterior[idx]
+                        breakdown=original_posterior[idx] if self.gumbel else posterior[idx],
+                        states=new_states
                         ) for idx, trgt_word in enumerate(ids)]
         if return_dist:
             return new_hypos, posterior

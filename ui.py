@@ -24,6 +24,7 @@ import os
 import sys
 import platform
 import decoding
+import estimators
 
 import utils
 
@@ -81,6 +82,14 @@ def run_diagnostics():
 def parse_args(parser):
     """http://codereview.stackexchange.com/questions/79008/parse-a-config-file-
     and-add-to-command-line-arguments-using-argparse-in-python """
+    args, _ = parser.parse_known_args()
+    if args.decoder is not None:
+        decoding.DECODER_REGISTRY[args.decoder].add_args(parser)
+    if args.predictor is not None:
+        import predictors
+        predictors.PREDICTOR_REGISTRY[args.predictor].add_args(parser)
+    if args.estimator is not None:
+        estimators.ESTIMATOR_REGISTRY[args.estimator].add_args(parser)
     args = parser.parse_args()
     if args.config_file:
         if not YAML_AVAILABLE:
@@ -224,6 +233,10 @@ def get_parser():
                         help="Size of beam. Only used if --decoder is set to "
                         "'beam' or 'dijkstra'. For 'dijkstra' it limits the capacity"
                         " of the queue. Use --beam 0 for unlimited capacity.")
+    group.add_argument("--sub_beam", default=0, type=int,
+                        help="Size of sub beam. Only used if --decoder is set to "
+                        "'beam' or 'dijkstra'. For 'dijkstra' it limits the capacity"
+                        " of the queue. Use --beam 0 for unlimited capacity.")
     group.add_argument("--allow_unk_in_output", default=True, type='bool',
                         help="If false, remove all UNKs in the final "
                         "posteriors. Predictor distributions can still "
@@ -256,36 +269,20 @@ def get_parser():
                         "score. DO NOT USE early stopping in combination with "
                         "the dfs or restarting decoder when your predictors "
                         "can produce positive scores!")
-    group.add_argument("--diversity_groups", default=1, type=int,
-                       help="If this is greater than one, promote diversity "
-                       "between groups of hypotheses as in Vijayakumar et. "
-                       "al. (2016). Only compatible with 'diverse_beam' decoder. "
-                       "They found diversity_groups = beam size to be most "
-                       "effective.")
-    group.add_argument("--diversity_reward", default=0.5, type=float,
-                       help="If this is greater than zero, add reward for diversity "
-                       "between groups as in Vijayakumar et. al. (2016). Only "
-                       "compatible with 'diverse_beam' decoder. Setting value "
-                       "equal to 0 recovers standard beam search.")
     group.add_argument("--simplelendfs_lower_bounds_file", default="",
                         help="Path to a file with length dependent lower "
                         "lower bounds for the simplelendfs decoder. Each line "
                         "must be in the format <len1>:<lower-bound1> ... "
                         "<lenN>:<lower-boundN>.")
-    group.add_argument("--memory_threshold_coef", default=0, type=int,
-                        help="total queue size will be set to `memory_threshold_coef`"
-                         "* beam size. When capacity is exceeded, the worst scoring "
-                         "hypothesis from the earliest time step will be discarded")
     group.add_argument("--gumbel", action='store_true',
                         help="Add gumbel RV to make beam search effectively"
                         "random sampling")
     group.add_argument('--temperature', default=1., type=float, metavar='N',
                        help='temperature for generation')
-    group.add_argument('--nucleus_threshold', default=0.95, type=float, metavar='N',
-                       help='implementation of Holtzman et. al 2019 p-nucleus sampling. '
-                       "Value specifies probability core from which to consider "
-                       "top items for sampling. Only compatible with 'sampling' "
-                       "decoder.")
+    group.add_argument("--estimator", default=None, choices=estimators.ESTIMATOR_REGISTRY.keys(),
+                        help="Report estimates for statistics during decoding")
+    group.add_argument("--estimator_iterations", default=1, type=int,
+                        help="Number of times to build estimator (for reporting variance)")
     
 
     ## Output options
@@ -353,7 +350,7 @@ def get_parser():
     
     ## Predictor options
     group = parser.add_argument_group('General predictor options')
-    group.add_argument("--predictors", default="fairseq",
+    group.add_argument("--predictor", default="fairseq",
                         help="Comma separated list of predictors. Predictors "
                         "are scoring modules which define a distribution over "
                         "target words given the history and some side "
@@ -364,17 +361,6 @@ def get_parser():
                         "         Options: fairseq_path, fairseq_user_dir, "
                         "fairseq_lang_pair, n_cpu_threads")    
     
-    
-    # Neural predictors
-    group = parser.add_argument_group('Neural predictor options')
-    group.add_argument("--fairseq_path", default="",
-                       help="Points to the model file (*.pt) for the fairseq "
-                       "predictor. Like --path in fairseq-interactive.")
-    group.add_argument("--fairseq_user_dir", default="",
-                       help="fairseq user directory for additional models.")
-    group.add_argument("--fairseq_lang_pair", default="",
-                       help="Language pair such as 'en-fr' for fairseq. Used "
-                       "to load fairseq dictionaries")
 
             
     return parser
@@ -421,7 +407,7 @@ def validate_args(args):
                      "increasing max_len_factor to the length longest relevant"
                      " hypothesis" % (args.max_len_factor, args.max_len_factor))
         sanity_check_failed = True
-    if "fairseq" in args.predictors and args.indexing_scheme != "fairseq":
+    if "fairseq" in args.predictor and args.indexing_scheme != "fairseq":
         logging.warn("You are using the fairseq predictor, but indexing_scheme "
                      "is not set to fairseq.")
         sanity_check_failed = True

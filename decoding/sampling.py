@@ -28,7 +28,7 @@ class SamplingDecoder(Decoder):
         self.nbest = decoder_args.nbest
         assert not self.gumbel
         
-    def decode(self, src_sentence, seed=0):
+    def decode(self, src_sentence):
         self.initialize_predictor(src_sentence)
         hypos = [PartialHypothesis(copy.deepcopy(self.get_predictor_states())) for i in range(self.nbest)]
 
@@ -40,7 +40,7 @@ class SamplingDecoder(Decoder):
                     hypo.score = self.get_adjusted_score(hypo)
                     self.add_full_hypo(hypo.generate_full_hypothesis())
                 else:
-                    self._expand_hypo(hypo, seed=seed+sen_seed)
+                    self._expand_hypo(hypo, seed=self.seed+sen_seed)
                     next_hypos.append(hypo)
             hypos = next_hypos
             t+=1
@@ -67,6 +67,9 @@ class SamplingDecoder(Decoder):
 
     def _sample(self, posterior, seed):
         return sampling_utils.log_multinomial_sample(posterior, seed=seed)
+
+    def is_deterministic(self):
+        return False
 
 
 class NucleusSamplingDecoder(SamplingDecoder):
@@ -102,4 +105,13 @@ class NucleusSamplingDecoder(SamplingDecoder):
         c = np.logaddexp.accumulate(sorted_dist) 
         last = bisect(c, threshold)
         dist[sorted_inds[last+1:]] = utils.NEG_INF
+
+    @staticmethod
+    def add_args(parser):
+        parser.add_argument('--nucleus_threshold', default=0.95, type=float, metavar='N',
+                       help='implementation of Holtzman et. al 2019 p-nucleus sampling. '
+                       "Value specifies probability core from which to consider "
+                       "top items for sampling. Only compatible with 'sampling' "
+                       "decoder.")
+        
     
