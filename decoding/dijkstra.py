@@ -38,9 +38,8 @@ class DijkstraDecoder(Decoder):
         self.cur_capacity = self.capacity
         open_set = MinMaxHeap(reserve=self.capacity) if self.capacity > 0 else []
         self.push(open_set, 0.0, PartialHypothesis(self.get_predictor_states()))
-
         while open_set:
-            c,hypo = self.pop(open_set)#.popmin()
+            c,hypo = self.pop(open_set)
             logging.debug("Expand (est=%f score=%f exp=%d best=%f): sentence: %s"
                           % (-c, 
                              hypo.score, 
@@ -57,13 +56,12 @@ class DijkstraDecoder(Decoder):
 
             if len(hypo) == self.max_len: #discard and continue
                 continue
-
             for next_hypo in self._expand_hypo(hypo, self.capacity):
                 score = self.get_adjusted_score(next_hypo)
                 self.push(open_set, score, next_hypo)
 
         if not self.full_hypos:
-            self.add_full_hypo(self.lower_bound.generate_full_hypothesis())
+            self.add_full_hypo(self.get_empty_hypo().generate_full_hypothesis())
         return self.get_full_hypos_sorted()
 
     

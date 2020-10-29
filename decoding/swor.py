@@ -37,7 +37,7 @@ class BasicSworDecoder(Decoder):
                 logging.warn("Samples cover 100% of probability. Behavior beyond this point is undefined")
             self.reset_predictor(src_sentence)
             hypo = PartialHypothesis(self.get_predictor_states())
-            hypo, score = self._expand_hypo(hypo, seed=self.seed+len(self.full_hypos))
+            hypo, score = self._expand_hypo(hypo)
             self.add_full_hypo(hypo.generate_full_hypothesis())
             self.covered_lprob = utils.log_add(self.covered_lprob, score)
             
@@ -48,7 +48,7 @@ class BasicSworDecoder(Decoder):
         self.dists = MapDist()
         super().initialize_predictor(src_sentence)
 
-    def _expand_hypo(self, hypo, seed=0):
+    def _expand_hypo(self, hypo):
         if hypo.get_last_word() == utils.EOS_ID or len(hypo) == self.max_len:
             return hypo, 0.0
         #assert False
@@ -77,7 +77,7 @@ class BasicSworDecoder(Decoder):
         hypo.score_breakdown.append(lprobabilities[ind])
         hypo.trgt_sentence += [next_word]
         hypo.word_to_consume = next_word
-        hypo, score = self._expand_hypo(hypo, seed=seed)
+        hypo, score = self._expand_hypo(hypo)
         score += lprobabilities[ind] 
         self.dists.adjust(prefix, next_word, score)
         hypo.base_score = sum(hypo.score_breakdown)
@@ -116,7 +116,7 @@ class SworDecoder(BasicSworDecoder):
         """
         super(SworDecoder, self).__init__(decoder_args)
 
-    def _expand_hypo(self, hypo, seed=0):
+    def _expand_hypo(self, hypo):
         if hypo.get_last_word() == utils.EOS_ID or len(hypo) == self.max_len:
             return hypo, self.dists.marg(tuple(hypo.trgt_sentence))
         prefix = tuple(hypo.trgt_sentence)
@@ -145,7 +145,7 @@ class SworDecoder(BasicSworDecoder):
         hypo.score_breakdown.append(lprobabilities[ind])
         hypo.trgt_sentence += [next_word]
         hypo.word_to_consume = next_word
-        hypo, final = self._expand_hypo(hypo, seed=seed)
+        hypo, final = self._expand_hypo(hypo)
         self.dists.adjust(prefix, next_word, final)
         hypo.base_score = hypo.score_breakdown[-1]
         return hypo, final
@@ -167,7 +167,7 @@ class MemEfficientSworDecoder(BasicSworDecoder):
         super(MemEfficientSworDecoder, self).__init__(decoder_args)
 
     
-    def _expand_hypo(self, hypo, seed=0):
+    def _expand_hypo(self, hypo):
         if hypo.get_last_word() == utils.EOS_ID or len(hypo) == self.max_len:
             return hypo, 0.0
         if hypo.word_to_consume is not None:
@@ -178,14 +178,14 @@ class MemEfficientSworDecoder(BasicSworDecoder):
         lprobabilities = utils.log_softmax(posterior, self.temperature)
         adjusted_lprobabilities = self.adjust_probabilities(lprobabilities, prefix, ids)
 
-        ind = sampling_utils.log_multinomial_sample(adjusted_lprobabilities, seed)
+        ind = sampling_utils.log_multinomial_sample(adjusted_lprobabilities)
         next_word = ids[ind]
 
         hypo.score += adjusted_lprobabilities[ind]
         hypo.score_breakdown.append(lprobabilities[ind])
         hypo.trgt_sentence += [next_word]
         hypo.word_to_consume = next_word
-        hypo, score = self._expand_hypo(hypo, seed=seed)
+        hypo, score = self._expand_hypo(hypo)
         score += lprobabilities[ind] 
         self.ids[prefix][next_word] = utils.log_add(score, self.ids[prefix][next_word])
         hypo.base_score = sum(hypo.score_breakdown)
@@ -234,7 +234,7 @@ class CPSworDecoder(Decoder):
         self.nbest = decoder_args.nbest
         self.early_stopping = decoder_args.early_stopping
         self.estimate_rounds = decoder_args.inc_prob_estimate_rounds
-        self.sample_beam = decoder_args.sub_beam 
+        self.sample_beam = decoder_args.sub_beam if decoder_args.sub_beam else self.nbest
         assert not self.gumbel
     
     def decode(self, src_sentence):
@@ -257,33 +257,37 @@ class CPSworDecoder(Decoder):
                 for next_hypo in self._expand_hypo(hypo, self.sample_beam):
                     next_scores.append(next_hypo.base_score)
                     next_hypos.append(next_hypo)
-
-            hypos = self._get_next_hypos(next_hypos, next_scores, seed=self.seed)
+            hypos = self._get_next_hypos(next_hypos, next_scores)
 
         assert self.beam_prob <= 1
         return self.get_full_hypos_sorted(hypos)
 
-    def _get_next_hypos(self, hypos, scores, seed=0, include_last=False):
+    def _get_next_hypos(self, hypos, scores, include_last=False):
         # faster to append to python list then convert to np array
         scores = np.array(scores)
         inds, cur_beam_prob, inc_probs = sampling_utils.log_sample_k_dpp(scores, 
-                                                        self.nbest, seed=seed,
+                                                        self.nbest,
                                                         include_last=include_last)
         assert len(inds) == min(len(scores), self.nbest)
         self.beam_prob += cur_beam_prob
         for i in inds:
-            hypos[i].score += min(0.,inc_probs[i])
+            hypos[i].score += inc_probs[i]
         return [hypos[ind] for ind in inds]
 
     def get_inclusion_prob_estimate(self, src_sentence, trgt, **kwargs):
+        if self.estimate_rounds == 1:
+            return trgt.total_score
         estimates = []
         for i in range(self.estimate_rounds):
-            estimates.append(self.monte_carlo_inclusion_prob_estimate(src_sentence, trgt, seed=self.seed*self.nbest+i))
+            self.initialize_predictor(src_sentence)
+            np.random.seed(seed=self.seed*self.nbest+i)
+            estimates.append(self.monte_carlo_inclusion_prob_estimate(src_sentence, trgt))
+        # reset seed
+        np.random.seed(seed=self.seed)
         return utils.logsumexp(estimates) - np.log(self.estimate_rounds)
 
-    def monte_carlo_inclusion_prob_estimate(self, src_sentence, trgt, seed=0):
+    def monte_carlo_inclusion_prob_estimate(self, src_sentence, trgt):
         self.trgt_sentence = trgt.trgt_sentence + [utils.EOS_ID] if trgt.trgt_sentence[-1] != utils.EOS_ID else trgt.trgt_sentence
-        self.initialize_predictor(src_sentence)
 
         it = 0
         self.beam_prob = 0.
@@ -309,7 +313,7 @@ class CPSworDecoder(Decoder):
 
             next_scores.append(trgt_hypo.base_score)
             next_hypos.append(trgt_hypo)
-            hypos = self._get_next_hypos(next_hypos, next_scores, seed, include_last=True)
+            hypos = self._get_next_hypos(next_hypos, next_scores, include_last=True)
 
         assert trgt_hypo.trgt_sentence == self.trgt_sentence
         assert self.beam_prob <= 0
@@ -393,16 +397,16 @@ class PSworDecoder(CPSworDecoder):
                     next_scores.append(next_hypo.score_breakdown[-1] + np.log(c))
                     next_hypos.append(next_hypo)
 
-            hypos = self._get_next_hypos(next_hypos, next_scores, seed=self.seed)
+            hypos = self._get_next_hypos(next_hypos, next_scores)
             
         return self.get_full_hypos_sorted(hypos)
     
 
-    def _get_next_hypos(self, hypos, scores, seed=0):
+    def _get_next_hypos(self, hypos, scores):
         # faster to append to python list then convert to np array
         scores = np.array(scores)
         inds, inc_probs = sampling_utils.log_sample_poisson(scores, 
-                                                normalize=False, seed=seed)
+                                                normalize=False)
         for i in inds:
             hypos[i].base_score += min(0.,inc_probs[i])
         return [hypos[ind] for ind in inds]

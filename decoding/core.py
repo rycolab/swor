@@ -418,7 +418,6 @@ class Decoder(Observable):
 
 
     def gumbelify(self, hypo, posterior):
-        np.random.seed(seed=self.seed)
         vf = np.vectorize(lambda x: self.get_pos_score(hypo, x) - self.get_adjusted_score(hypo))
         shifted_posterior = vf(posterior)
         shifted_posterior = utils.log_softmax(shifted_posterior)
@@ -536,6 +535,8 @@ class Decoder(Observable):
             src_sentence (list): List of source word ids without <S> or
                                  </S> which make up the source sentence
         """
+        if not self.is_deterministic():
+            np.random.seed(seed=self.seed)
         self.max_len = int(np.ceil(self.max_len_factor * len(src_sentence)))
         self.full_hypos = []
         self.current_sen_id += 1

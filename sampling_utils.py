@@ -4,40 +4,42 @@ import utils
 from bisect import bisect
 import logging
 
-def gumbel_max_sample(x, seed=0):
+def gumbel_max_sample(x, seed=None):
     """
     x: log-probability distribution (unnormalized is ok) over discrete random variable
     """
-    
+    if seed is not None:
+        np.random.seed(seed=seed)
     z = np.random.gumbel(loc=0, scale=1, size=x.shape)
     return np.nanargmax(x + z)
 
-def exponential_sample(x, seed=0):
+def exponential_sample(x, seed=None):
     """
     probability distribution over discrete random variable
     """
-    np.random.seed(seed=seed)
+    if seed is not None:
+        np.random.seed(seed=seed)
     E = -np.log(np.random.uniform(size=len(x)))
     E /= x
     return np.nanargmin(E)
 
-def log_multinomial_sample(x, seed=0):
+def log_multinomial_sample(x, seed=None):
     """
     x: log-probability distribution (unnormalized is ok) over discrete random variable
     """
-    np.random.seed(seed=seed)
+    if seed is not None:
+        np.random.seed(seed=seed)
     x[np.where(np.isnan(x))] = utils.NEG_INF
     c = np.logaddexp.accumulate(x) 
     key = np.log(np.random.uniform())+c[-1]
     return bisect(c, key)
 
-def sample_k_dpp(lambdas, k, seed=0):
+def sample_k_dpp(lambdas, k):
     if k >= len(lambdas):
         return range(len(lambdas))
     N = len(lambdas)
     E = elem_polynomials(lambdas, k)
    
-    np.random.seed(seed=seed)
     J = []
     for n in range(N,0,-1):
         u = np.random.uniform()
@@ -49,8 +51,7 @@ def sample_k_dpp(lambdas, k, seed=0):
                 break
     return J
 
-def log_sample_k_dpp(log_lambdas, k, seed=0, include_last=False):
-    np.random.seed(seed=seed)
+def log_sample_k_dpp(log_lambdas, k, include_last=False):
     N = len(log_lambdas)
     if k >= N:
         return range(N), 0., [0.]*N
@@ -76,11 +77,9 @@ def log_sample_k_dpp(log_lambdas, k, seed=0, include_last=False):
             k -= 1
             if k == 0:
                 break
-
     return J, log_beam_prob(log_lambdas, log_E, J), inc_probs
 
-def log_sample_poisson(log_lambdas, k=1, normalize=True, seed=0):
-    np.random.seed(seed=seed)
+def log_sample_poisson(log_lambdas, k=1, normalize=True):
     J = []
     
     inc_probs = np.log(k) + log_lambdas 

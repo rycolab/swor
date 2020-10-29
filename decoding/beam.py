@@ -116,10 +116,7 @@ class DiverseBeamDecoder(BeamDecoder):
         
     def _get_initial_hypos(self):
         """Get the list of initial ``PartialHypothesis``. """
-        bos_hypo = PartialHypothesis(self.get_predictor_states())
-        hypos = self._expand_hypo(bos_hypo, self.beam_size)
-        inds = list(np.cumsum(self.group_sizes))
-        return [hypos[a:b] for a,b in zip([0] + inds[:-1], inds)]
+        return [[PartialHypothesis(copy.deepcopy(self.get_predictor_states()))] for i in range(self.num_groups)]
 
     def _get_next_hypos(self, all_hypos, size, other_groups=None):
         """Get hypos for the next iteration. """

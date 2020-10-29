@@ -33,14 +33,16 @@ class SamplingDecoder(Decoder):
         hypos = [PartialHypothesis(copy.deepcopy(self.get_predictor_states())) for i in range(self.nbest)]
 
         t = 0
+        base_seed = self.nbest*self.seed
         while hypos and t < self.max_len:
             next_hypos = []
             for sen_seed, hypo in enumerate(hypos):
+                np.random.seed(seed=base_seed+sen_seed)
                 if hypo.get_last_word() == utils.EOS_ID:
                     hypo.score = self.get_adjusted_score(hypo)
                     self.add_full_hypo(hypo.generate_full_hypothesis())
                 else:
-                    self._expand_hypo(hypo, seed=self.seed+sen_seed)
+                    self._expand_hypo(hypo)
                     next_hypos.append(hypo)
             hypos = next_hypos
             t+=1
@@ -52,11 +54,11 @@ class SamplingDecoder(Decoder):
         return self.get_full_hypos_sorted()
 
     
-    def _expand_hypo(self, hypo, seed=0):
+    def _expand_hypo(self, hypo):
 
         self.set_predictor_states(hypo.predictor_states)
         ids, posterior, _ = self.apply_predictor()
-        ind = self._sample(posterior, seed)
+        ind = self._sample(posterior)
         next_word = ids[ind]
 
         hypo.predictor_states = self.get_predictor_states()
@@ -65,8 +67,8 @@ class SamplingDecoder(Decoder):
         hypo.trgt_sentence += [next_word]
         self.consume(next_word)
 
-    def _sample(self, posterior, seed):
-        return sampling_utils.log_multinomial_sample(posterior, seed=seed)
+    def _sample(self, posterior):
+        return sampling_utils.log_multinomial_sample(posterior)
 
     def is_deterministic(self):
         return False
@@ -92,9 +94,9 @@ class NucleusSamplingDecoder(SamplingDecoder):
         super(NucleusSamplingDecoder, self).__init__(decoder_args)
         self.nucleus_threshold = decoder_args.nucleus_threshold
 
-    def _sample(self, posterior, seed):
+    def _sample(self, posterior):
         self._truncate_log_dist(posterior, np.log(self.nucleus_threshold))
-        return sampling_utils.log_multinomial_sample(posterior, seed=seed)
+        return sampling_utils.log_multinomial_sample(posterior)
 
     @staticmethod
     def _truncate_log_dist(dist, threshold):

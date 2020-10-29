@@ -75,3 +75,4 @@ class ModelEntropyEstimator(Estimator):
 		value = -hypo.base_score if hypo.base_score else -hypo.total_score
 		self.increment(value, weight)
 		return value
+
