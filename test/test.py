@@ -44,7 +44,10 @@ import estimators
 from test.dummy_predictor import DummyPredictor
 from ui import get_args
 
-random.seed(0)
+# SETTING RANDOM SEED HERE (should probably move)
+NUM_HYPOTHESES = 5
+SEED = 0
+VOCAB_SIZE = 20
 args = None
 """This variable is set to the global configuration when 
 base_init().
@@ -97,7 +100,7 @@ def add_predictor(decoder):
             ``add_predictor()``
     """
     
-    p = DummyPredictor(vocab_size=20)
+    p = DummyPredictor(SEED, vocab_size=VOCAB_SIZE)
     decoder.add_predictor("dummy", p)
 
 def create_decoder():
@@ -164,7 +167,7 @@ def do_decode(decoder,
     
     start_time = time.time()
     logging.info("Start time: %s" % start_time)
-    src_sentences = [randomString(test_str_length) for i in range(3)]
+    src_sentences = [randomString(test_str_length) for i in range(NUM_HYPOTHESES)]
     estimates = []
     for sen_idx, src in enumerate(src_sentences):
         decoder.set_current_sen_id(sen_idx)
@@ -209,30 +212,34 @@ def do_decode(decoder,
                     if kau and h.total_score <= kau:
                         continue
                     inc_prob = decoder.get_inclusion_prob_estimate(src, h, kau=kau)
+                    # probability of hypothesis under the model
                     model_prob = h.base_score if h.base_score else h.total_score
                     val = estimator.add_value(h, model_prob - inc_prob, 
                         ref=trgt_sentences[sen_idx] if trgt_sentences else None)
                     container.append((model_prob - inc_prob, val))
-                logging.info("Estimator value: %.5f, %.2f" % (estimator.estimate(), np.exp(estimator._weight)))
+                logging.info("Estimator value: %.5f" % (estimator.estimate()))
                 estimator.reset()
                 sen_estimates.append(container)
 
         estimates.append(sen_estimates)
-    estimates_ = []
-    from scipy.special import logsumexp
-    for ex in estimates:
-        tmp = []
-        for st in ex:
-            total_weight = logsumexp([s[0] for s in st])
-            tmp.append(np.exp(logsumexp([w + np.log(v) for w,v in st]) - total_weight))
-        estimates_.append(tmp)
-    vals = [[np.mean([l[i] for l in estimates_[:j+1]]) for i in range(len(estimates_[0]))] for j in range(len(estimates_))]
-    means = [np.mean(i) for i in vals]
-    std_devs = [np.std(i) for i in vals]
-    print(means)
-    print(std_devs)
+    if estimator:
+        report_estimate_statistics(estimates)
     return src_sentences, all_hypos
 
+def report_estimate_statistics(estimates):
+    all_estimates = []
+    from scipy.special import logsumexp
+    for container in estimates:
+        tmp = []
+        for single_estimate in container:
+            total_weight = logsumexp([s[0] for s in single_estimate])
+            tmp.append(np.exp(logsumexp([w + np.log(v) for w,v in single_estimate]) - total_weight))
+        all_estimates.append(tmp)
+    # vals = [[np.mean([l[i] for l in estimates_[:j+1]]) for i in range(len(estimates_[0]))] for j in range(len(estimates_))]
+    means = [np.mean(i) for i in all_estimates]
+    std_devs = [np.std(i) for i in all_estimates]
+    logging.info("Mean estimator value per hypothesis: %s", (str(means)))
+    logging.info("Estimator standard deviation per hypothesis: %s", (str(std_devs)))    
 
 def do_decode_swor(decoder, 
               output_handlers, 
@@ -240,22 +247,12 @@ def do_decode_swor(decoder,
               estimator=None,
               trgt_sentences=None,
               num_log=1):
-    args.decoder = "inclusion"
-    inc_decoder = create_decoder()
     
-    src_sentences, all_hypos = do_decode(decoder, output_handlers, src_sentences, trgt_sentences, num_log=num_log)
+    src_sentences, all_hypos = do_decode(decoder, output_handlers, src_sentences, trgt_sentences=trgt_sentences, estimator=estimator, num_log=num_log)
     all_trgt_sens = [[tuple(h.trgt_sentence) for h in hypos] for hypos in all_hypos]
     for s, hypos in zip(src_sentences, all_trgt_sens):
         if len(hypos) != len(set(hypos)):
             logging.error("Not unique set for sentence %s; found %d duplicates." % (str(s), len(hypos) - len(set(hypos))))
-        if hypos:
-            for i in range(5):
-                print(inc_decoder.decode(s,list(hypos[-1]), seed=i))
-            print('----')
-    for hypos in all_hypos:
-        for h in hypos:
-            if h.total_score > sum(h.score_breakdown) and not decoder.gumbel:
-                logging.error("Computation error. Adjusted score greater than original score for sentence %s" % str(s))
 
 
 def test_utils():
@@ -266,8 +263,6 @@ def test_utils():
         N = np.random.randint(2,50)
         k = np.random.randint(1,N)
         min_fac = min(N-k, k)
-        # print(abs(np.exp(utils.log_comb(N,k)) - binom(N,k)))
-        # print(3/(360*(min_fac)**3))
         # assert abs(np.exp(utils.log_comb(N,k)) - binom(N,k)) < 3/(12*(min_fac+1))
 
     for a,b in np.random.uniform(0, 10, size=(100, 2)):
@@ -306,7 +301,7 @@ def test_sampling():
         assert_equal(brute_partition, elem_polynomial_partition, 'standard elementary polynomial')
         assert_equal(np.log(brute_partition), log_elem_polynomial_partition, 'log elementary polynomial')
 
-    for l in range(1):
+    for l in range(10):
         N = np.random.randint(2,20)
         k = np.random.randint(1,N)
         lambdas = np.random.uniform(size=N)
@@ -331,14 +326,12 @@ if not args.decoder:
     test_utils()
     exit(0)
 
+random.seed(SEED)
 decoder = create_decoder()
 estimator = create_estimator()
 
 if 'swor' in args.decoder or args.gumbel:
-    if args.decoder == 'cp_swor':
-        test_cp_decode(decoder, [], False, num_log=args.num_log)
-    else:
-        do_decode_swor(decoder, [], False, num_log=args.num_log)
+    do_decode_swor(decoder, [], False, estimator=estimator, num_log=args.num_log)
 else:
     if args.beam <= 0 and not ('swor' in args.decoder or args.gumbel):
         logging.warn("Using beam size <= 0. Decoding may not terminate")

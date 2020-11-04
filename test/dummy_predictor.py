@@ -13,22 +13,13 @@ import hashlib
 class DummyPredictor(Predictor):
     """Predictor for using fairseq models."""
 
-    def __init__(self, vocab_size=10, n_cpu_threads=-1, seed=0):
-        """Initializes a fairseq predictor.
+    def __init__(self, seed, dist_temperature=1.0, vocab_size=10, ):
 
-        Args:
-            model_path (string): Path to the fairseq model (*.pt). Like
-                                 --path in fairseq-interactive.
-            lang_pair (string): Language pair string (e.g. 'en-fr').
-            user_dir (string): Path to fairseq user directory.
-            n_cpu_threads (int): Number of CPU threads. If negative,
-                                 use GPU.
-        """
         super(DummyPredictor, self).__init__()
         self.vocab_size = vocab_size
         self.rg = np.random.default_rng(seed=seed)
         self.num_dists = 1000
-        self.model_temperature = 1.0
+        self.model_temperature = dist_temperature
         # Create fake distributions with random number generator
         self.prob_dists = [self.rg.uniform(size=self.vocab_size) for i in range(self.num_dists)]
 
