@@ -265,7 +265,7 @@ class CPSworDecoder(Decoder):
     def _get_next_hypos(self, hypos, scores, include_last=False):
         # faster to append to python list then convert to np array
         scores = np.array(scores)
-        inds, cur_beam_prob, inc_probs = sampling_utils.log_sample_k_dpp(scores, 
+        inds, cur_beam_prob, inc_probs = CPSworDecoder.log_sample_k_dpp(scores, 
                                                         self.nbest,
                                                         include_last=include_last)
         assert len(inds) == min(len(scores), self.nbest)
@@ -273,6 +273,32 @@ class CPSworDecoder(Decoder):
         for i in inds:
             hypos[i].score += inc_probs[i]
         return [hypos[ind] for ind in inds]
+
+    def _expand_hypo(self, hypo, limit=0, return_dist=False):
+        """Get the best beam size expansions of ``hypo``.
+        
+        Args:
+            hypo (PartialHypothesis): Hypothesis to expand
+        
+        Returns:
+            list. List of child hypotheses
+        """
+        self.set_predictor_states(copy.deepcopy(hypo.predictor_states))
+        if not hypo.word_to_consume is None: # Consume if cheap expand
+            self.consume(hypo.word_to_consume)
+            hypo.word_to_consume = None
+
+        ids, posterior, original_posterior = self.apply_predictor(hypo, limit)
+        #assert hypo.predictor_states != self.get_predictor_states()
+        new_states = self.get_predictor_states()
+        new_hypos = [hypo.cheap_expand(
+                        trgt_word,
+                        hypo.score,
+                        base_score=posterior[idx] + hypo.base_score,
+                        breakdown=posterior[idx],
+                        states=new_states
+                        ) for idx, trgt_word in enumerate(ids)]
+        return new_hypos
 
     def get_inclusion_prob_estimate(self, src_sentence, trgt, **kwargs):
         if self.estimate_rounds == 1:
@@ -319,38 +345,66 @@ class CPSworDecoder(Decoder):
         assert self.beam_prob <= 0
         return trgt_hypo.score
 
-    def _expand_hypo(self, hypo, limit=0, return_dist=False):
-        """Get the best beam size expansions of ``hypo``.
-        
-        Args:
-            hypo (PartialHypothesis): Hypothesis to expand
-        
-        Returns:
-            list. List of child hypotheses
-        """
-        self.set_predictor_states(copy.deepcopy(hypo.predictor_states))
-        if not hypo.word_to_consume is None: # Consume if cheap expand
-            self.consume(hypo.word_to_consume)
-            hypo.word_to_consume = None
-
-        ids, posterior, original_posterior = self.apply_predictor(hypo, limit)
-        #assert hypo.predictor_states != self.get_predictor_states()
-        new_states = self.get_predictor_states()
-        new_hypos = [hypo.cheap_expand(
-                        trgt_word,
-                        hypo.score,
-                        base_score=posterior[idx] + hypo.base_score,
-                        breakdown=posterior[idx],
-                        states=new_states
-                        ) for idx, trgt_word in enumerate(ids)]
-        return new_hypos
-
     def _all_eos(self, hypos):
         """Returns true if the all hypotheses end with </S>"""
         return all([hypo.get_last_word() == utils.EOS_ID for hypo in hypos])
 
     def is_deterministic(self):
         return False
+
+    @staticmethod
+    def log_sample_k_dpp(log_lambdas, k, include_last=False):
+        N = len(log_lambdas)
+        if k >= N:
+            return range(N), 0., [0.]*N
+        
+        log_E = sampling_utils.log_elem_polynomials(log_lambdas, k)
+        inc_probs = CPSworDecoder.inclusion_probs(log_lambdas, k, log_E)
+        stab_test = log_lambdas[inc_probs > 0.]
+        if not stab_test.size == 0:
+            logging.warn("Experiencing some numerical instability.")
+        J = []
+        if include_last:
+            J.append(N-1)
+            N -= 1
+            k -= 1
+            if k == 0:
+                return J, CPSworDecoder.log_beam_prob(log_lambdas, log_E, J), inc_probs
+
+        for n in range(N,0,-1):
+            u = np.random.uniform()
+            thresh = log_lambdas[n-1] + log_E[k-1,n-1] - log_E[k,n]  
+            if np.log(u) < thresh:
+                J.append(n-1)
+                k -= 1
+                if k == 0:
+                    break
+        return J, CPSworDecoder.log_beam_prob(log_lambdas, log_E, J), inc_probs
+
+    @staticmethod
+    def log_beam_prob(log_lambdas, log_E, beam):
+        if len(beam) != log_E.shape[0] - 1:
+            return utils.NEG_INF
+        return sum([log_lambdas[i] for i in beam]) - log_E[-1,-1]
+
+    @staticmethod
+    def inclusion_probs(log_lambdas, k, E=None):
+        if E is None:
+            E = sampling_utils.log_elem_polynomials(log_lambdas, k)
+
+        k_, N = E.shape[0] - 1, E.shape[1] - 1
+        assert k_ == k
+        dv = np.full(N, utils.NEG_INF)
+        d_E = np.full((k+1,N+1), utils.NEG_INF)
+        d_E[k, N] = 0.
+        for r in reversed(range(1,k+1)):
+            for n in reversed(range(1,N+1)):
+                d_E[r,n-1]   = utils.log_add(d_E[r,n-1], d_E[r,n])
+                dv[n-1]     = utils.log_add(dv[n-1], d_E[r,n] + E[r-1,n-1])
+                d_E[r-1,n-1] = utils.log_add(d_E[r-1,n-1], d_E[r,n] + log_lambdas[n-1])
+
+        Z = E[k, len(log_lambdas)]
+        return dv + log_lambdas - Z
 
     @staticmethod
     def add_args(parser):
@@ -405,7 +459,7 @@ class PSworDecoder(CPSworDecoder):
     def _get_next_hypos(self, hypos, scores):
         # faster to append to python list then convert to np array
         scores = np.array(scores)
-        inds, inc_probs = sampling_utils.log_sample_poisson(scores, 
+        inds, inc_probs = PSworDecoder.log_sample_poisson(scores, 
                                                 normalize=False)
         for i in inds:
             hypos[i].base_score += min(0.,inc_probs[i])
@@ -415,6 +469,19 @@ class PSworDecoder(CPSworDecoder):
         """Returns true if the all hypotheses end with </S>"""
         return all([hypo.get_last_word() == utils.EOS_ID for hypo in hypos])
 
+    @staticmethod
+    def log_sample_poisson(log_lambdas, k=1, normalize=True):
+        J = []
+        
+        inc_probs = np.log(k) + log_lambdas 
+        if normalize:
+            inc_probs -= utils.logsumexp(log_lambdas)
+        
+        for i,l in enumerate(inc_probs):
+            u = np.random.uniform() 
+            if np.log(u) < l:
+                J.append(i)
+        return J, inc_probs
 
 class MapDist(object):
 

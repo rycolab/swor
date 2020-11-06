@@ -1,4 +1,3 @@
-from abc import abstractmethod
 import operator
 import logging
 import os
@@ -9,7 +8,6 @@ import sacrebleu
 
 import numpy as np
 from scipy.special import logsumexp
-import runstats
 
 # Reserved IDs
 GO_ID = 1
@@ -163,17 +161,92 @@ def as_ndarray(X, pad=-1, min_length=0):
     longest = max(len(max(X, key=len)), min_length)
     return np.array([i + [pad]*(longest-len(i)) for i in X])
 
-def logmexp(x, ignore_zero=False):
+def log1mexp_basic(x, ignore_zero=False):
+    """
+    Vectorizable implementation of log(1-exp(x))
+    """
     if ignore_zero:
         with np.errstate(divide='ignore'):
             return np.log1p(-np.exp(x))
     return np.log1p(-np.exp(x))
 
-def logpexp(x, ignore_zero=False):
+def log1pexp_basic(x, ignore_zero=False):
+    """
+    Vectorizable implementation of log(1+exp(x))
+    """
     if ignore_zero:
         with np.errstate(divide='ignore'):
             return np.log1p(np.exp(x))
     return np.log1p(np.exp(x))
+
+def log1pexp(x):
+    """
+    Numerically stable implementation of log(1+exp(x)) aka softmax(0,x).
+
+    -log1pexp(-x) is log(sigmoid(x))
+
+    Source:
+    http://cran.r-project.org/web/packages/Rmpfr/vignettes/log1mexp-note.pdf
+    """
+    if x <= -37:
+        return np.exp(x)
+    elif -37 <= x <= 18:
+        return np.log1p(np.exp(x))
+    elif 18 < x <= 33.3:
+        return x + np.exp(-x)
+    else:
+        return x
+
+def log1mexp(x):
+    """
+    Numerically stable implementation of log(1-exp(x))
+
+    Note: function is finite for x < 0.
+
+    Source:
+    http://cran.r-project.org/web/packages/Rmpfr/vignettes/log1mexp-note.pdf
+    """
+    if x >= 0:
+        return np.nan
+    else:
+        a = abs(x)
+        if 0 < a <= 0.693:
+            return np.log(-np.expm1(-a))
+        else:
+            return np.log1p(-np.exp(-a))
+
+def log_add(x, y):
+    """
+    Addition of 2 values in log space.
+    Need separate checks for inf because inf-inf=nan
+    """
+    if x == NEG_INF:
+        return y
+    elif y == NEG_INF:
+        return x
+    else:
+        if y <= x:
+            d = y-x
+            r = x
+        else:
+            d = x-y
+            r = y
+        return r + log1pexp(d)
+
+
+def log_minus(x, y):
+    """
+    Subtractioon of 2 values in log space.
+    Need separate checks for inf because inf-inf=nan
+    """
+    if x == y:
+        return NEG_INF
+    if y > x:
+        if y-x > MACHINE_EPS:
+            logging.warn("Using function log_minus for invalid values")
+        return np.nan
+    else:
+        return x + log1mexp(y-x)
 
 def logsigmoid(x):
     """
@@ -194,97 +267,6 @@ def signed_log_add(x, y, sign_x, sign_y):
         val = log_add(a,b)
 
     return sign_a, val
-
-
-def log1pexp(x):
-    """
-    Numerically stable implementation of log(1+exp(x)) aka softmax(0,x).
-
-    -log1pexp(-x) is log(sigmoid(x))
-
-    Source:
-    http://cran.r-project.org/web/packages/Rmpfr/vignettes/log1mexp-note.pdf
-    """
-    if x <= -37:
-        return np.exp(x)
-    elif -37 <= x <= 18:
-        return np.log1p(np.exp(x))
-    elif 18 < x <= 33.3:
-        return x + np.exp(-x)
-    else:
-        return x
-
-
-def log1mexp(x):
-    """
-    Numerically stable implementation of log(1-exp(x))
-
-    Note: function is finite for x < 0.
-
-    Source:
-    http://cran.r-project.org/web/packages/Rmpfr/vignettes/log1mexp-note.pdf
-    """
-    if x >= 0:
-        return np.nan
-    else:
-        a = abs(x)
-        if 0 < a <= 0.693:
-            return np.log(-np.expm1(-a))
-        else:
-            return np.log1p(-np.exp(-a))
-
-
-def log_add(x, y):
-    # implementation: need separate checks for inf because inf-inf=nan.
-    if x == NEG_INF:
-        return y
-    elif y == NEG_INF:
-        return x
-    else:
-        if y <= x:
-            d = y-x
-            r = x
-        else:
-            d = x-y
-            r = y
-        return r + log1pexp(d)
-
-
-def log_minus(x, y):
-    if x == y:
-        return NEG_INF
-    if y > x:
-        if y-x > MACHINE_EPS:
-            logging.warn("Using function log_minus for invalid values")
-        return np.nan
-    else:
-        return x + log1mexp(y-x)
-
-def logf(n):
-    n += 1
-    return (n - 0.5) * np.log(n) - n + 0.5 * np.log(2 * np.pi) + 1/(12 * n)
-
-def log_comb(n,r):
-    return logf(n) - logf(n - r) - logf(r)
-
-def log_add_old(a, b):
-    # takes two log probabilities; equivalent to adding probabilities in log space
-    if a == NEG_INF or b == NEG_INF:
-        return max(a, b)
-    smaller = min(a,b)
-    larger = max(a,b)
-    return larger + log1pexp(smaller - larger)
-
-def log_minus_old(a, b):
-    # takes two log probabilities; equivalent to subtracting probabilities in log space
-    assert b <= a
-    if a == b:
-        return NEG_INF
-    if b == NEG_INF:
-        return a
-    comp = a + log1mexp(-(a-b))
-    return comp if not np.isnan(comp) else NEG_INF
-
 
 def softmax(x, temperature=1.):
     return np.exp(log_softmax(x, temperature=temperature))
@@ -311,9 +293,9 @@ def perplexity(arr):
     score = sum([s for s in arr])
     return 2**(-score/len(arr))
 
-
 def prod(iterable):
     return reduce(operator.mul, iterable, 1.0)
+
 
 # Functions for common access to numpy arrays, lists, and dicts
 def common_viewkeys(obj):
@@ -466,72 +448,5 @@ def entropy(distribution, base=np.e):
 
 def log_entropy(log_distribution, base=np.e):
     return -sum(base**log_distribution * log_distribution)
-
-def stats_keeper():
-    return runstats.Statistics()
-
-
-
-MESSAGE_TYPE_DEFAULT = 1
-"""Default message type for observer messages """
-
-
-MESSAGE_TYPE_POSTERIOR = 2
-"""This message is sent by the decoder after ``apply_predictors`` was
-called. The message includes the new posterior distribution and the
-score breakdown. 
-"""
-
-
-MESSAGE_TYPE_FULL_HYPO = 3
-"""This message type is used by the decoder when a new complete 
-hypothesis was found. Note that this is not necessarily the best hypo
-so far, it is just the latest hypo found which ends with EOS.
-"""
-
-
-class Observer(object):
-    """Super class for classes which observe (GoF design patten) other
-    classes.
-    """
-    
-    @abstractmethod
-    def notify(self, message, message_type = MESSAGE_TYPE_DEFAULT):
-        """Get a notification from an observed object.
-        
-        Args:
-            message (object): the message sent by observed object
-            message_type (int): The type of the message. One of the
-                                ``MESSAGE_TYPE_*`` variables
-        """
-        raise NotImplementedError
-    
-
-class Observable(object):
-    """For the GoF design pattern observer """
-    
-    def __init__(self):
-        """Initializes the list of observers with an empty list """
-        self.observers = []
-    
-    def add_observer(self, observer):
-        """Add a new observer which is notified when this class fires
-        a notification
-        
-        Args:
-            observer (Observer): the observer class to add
-        """
-        self.observers.append(observer)
-    
-    def notify_observers(self, message, message_type = MESSAGE_TYPE_DEFAULT):
-        """Sends the given message to all registered observers.
-        
-        Args:
-            message (object): The message to send
-            message_type (int): The type of the message. One of the
-                                ``MESSAGE_TYPE_*`` variables
-        """
-        for observer in self.observers:
-            observer.notify(message, message_type)
 
     

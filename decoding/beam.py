@@ -48,7 +48,6 @@ class BeamDecoder(Decoder):
             self.stop_criterion = self._best_eos 
         else:
             self.stop_criterion = self._all_eos
-        self.reward = None  
     
     def _best_eos(self, hypos):
         """Returns true if the best hypothesis ends with </S>"""
@@ -78,8 +77,6 @@ class BeamDecoder(Decoder):
         self.initialize_predictor(src_sentence)
         hypos = self._get_initial_hypos()
         it = 0
-        if self.reward:
-            self.l = len(src_sentence)
         while not self.stop_criterion(hypos) and it < self.max_len:
             it = it + 1
             next_hypos = []
@@ -134,8 +131,6 @@ class DiverseBeamDecoder(BeamDecoder):
         self.initialize_predictor(src_sentence)
         hypos = self._get_initial_hypos()
         it = 1
-        if self.reward:
-            self.l = len(src_sentence)
         while not self.stop_criterion(utils.flattened(hypos)) and it < self.max_len:
             it = it + 1
             next_hypos = []

@@ -21,10 +21,8 @@ for bounded and unbounded vocabulary predictors.
 from abc import abstractmethod
 
 import utils
-from utils import Observer, NEG_INF, MESSAGE_TYPE_DEFAULT
 
-
-class Predictor(Observer):
+class Predictor(object):
     """A predictor produces the predictive probability distribution of
     the next word given the state of the predictor. The state may 
     change during ``predict_next()`` and ``consume()``. The functions
@@ -125,24 +123,6 @@ class Predictor(Observer):
         """
         raise NotImplementedError
     
-    def estimate_future_cost(self, hypo):
-        """Predictors can implement their own look-ahead cost functions.
-        They are used in A* if the --heuristics parameter is set to 
-        predictor. This function should return the future log *cost* 
-        (i.e. the lower the better) given the current predictor state, 
-        assuming that the last word in the partial hypothesis 'hypo' is
-        consumed next. This function must not change the internal 
-        predictor state.
-        
-        Args:
-            hypo (PartialHypothesis): Hypothesis for which to estimate
-                                      the future cost given the current
-                                      predictor state
-        
-        Returns
-            float. Future cost
-        """
-        return 0.0
     
     def get_unk_probability(self, posterior):
         """This function defines the probability of all words which are
@@ -157,10 +137,10 @@ class Predictor(Observer):
         Returns:
             float: Score to use for words outside ``posterior``
         """
-        return NEG_INF
+        return utils.NEG_INF
 
     def get_empty_str_prob(self):
-        return NEG_INF
+        return utils.NEG_INF
     
     def initialize(self, src_sentence):
         """Initialize the predictor with the given source sentence. 
@@ -168,19 +148,6 @@ class Predictor(Observer):
         which is constant throughout the processing of a single source
         sentence. For example, the NMT decoder runs the encoder network
         and stores the source annotations.
-        
-        Args:
-            src_sentence (list): List of word IDs which form the source
-                                 sentence without <S> or </S>
-        """
-        pass
-    
-    def initialize_heuristic(self, src_sentence):
-        """This is called after ``initialize()`` if the predictor is
-        registered as heuristic predictor (i.e. 
-        ``estimate_future_cost()`` will be called in the future).
-        Predictors can implement this function for initialization of 
-        their own heuristic mechanisms.
         
         Args:
             src_sentence (list): List of word IDs which form the source
@@ -221,13 +188,3 @@ class Predictor(Observer):
             bool. True if both states are equal, false if not
         """
         return False
-    
-    def notify(self, message, message_type = MESSAGE_TYPE_DEFAULT):
-        """We implement the ``notify`` method from the ``Observer``
-        super class with an empty method here s.t. predictors do not
-        need to implement it.
-        
-        Args:
-            message (object): The posterior sent by the decoder
-        """
-        pass

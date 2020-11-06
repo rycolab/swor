@@ -165,56 +165,6 @@ class NBestSeparateOutputHandler(OutputHandler):
         for f in self.f:
             f.close()
 
-
-class NBestOutputHandler(OutputHandler):
-    """Produces a n-best file in Moses format. The third part of each 
-    entry is used to store the separated unnormalized predictor scores.
-    Note that the sentence IDs are shifted: Moses n-best files start 
-    with the index 0, but in SGNMT and HiFST we usually refer to the 
-    first sentence with 1 (e.g. in lattice directories or --range)
-    """
-    name = 'nbest'
-    def __init__(self, path, args):
-        """Creates a Moses n-best list output handler.
-        
-        Args:
-            path (string):  Path to the n-best file to write
-            predictor_names: Names of the predictors whose scores
-                             should be included in the score breakdown
-                             in the n-best list
-        """
-        super(NBestOutputHandler, self).__init__()
-        self.path = path
-        self.predictor_names = []
-        name_count = {}
-        for name in utils.split_comma(args.predictors):
-            if not name in name_count:
-                name_count[name] = 1
-                final_name = name
-            else:
-                name_count[name] += 1
-                final_name = "%s%d" % (name, name_count[name])
-            self.predictor_names.append(final_name.replace("_", "0"))
-        
-        
-    def write_hypos(self, all_hypos, sen_indices):
-        """Writes the hypotheses in ``all_hypos`` to ``path`` """
-        with codecs.open(self.path, "w", encoding='utf-8') as f:
-            n_predictors = len(self.predictor_names)
-            for idx, hypos in zip(sen_indices, all_hypos):
-                for hypo in hypos:
-                    f.write("%d ||| %s ||| %s ||| %f" %
-                            (idx,
-                             io_utils.decode(hypo.trgt_sentence),
-                             ' '.join("%s= %f" % (
-                                  self.predictor_names[i],
-                                  sum([s[i][0] for s in hypo.score_breakdown]))
-                                      for i in range(n_predictors)),
-                             hypo.total_score))
-                    f.write("\n")
-                idx += 1
-
-
 class NgramOutputHandler(OutputHandler):
     """This output handler extracts MBR-style ngram posteriors from the 
     hypotheses returned by the decoder. The hypothesis scores are assumed to

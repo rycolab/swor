@@ -28,12 +28,6 @@ import estimators
 
 import utils
 
-YAML_AVAILABLE = True
-try:
-    import yaml
-except:
-    YAML_AVAILABLE = False
-
 
 def str2bool(v):
     """For making the ``ArgumentParser`` understand boolean values"""
@@ -52,13 +46,7 @@ def run_diagnostics():
         print("Checking Python3.... %sNOT FOUND %s%s"
               % (FAIL, sys.version_info, ENDC))
         print("Please upgrade to Python 3!")
-    if YAML_AVAILABLE:
-        print("Checking PyYAML.... %sOK%s" % (OKGREEN, ENDC))
-    else:
-        print("Checking PyYAML.... %sNOT FOUND%s" % (FAIL, ENDC))
-        logging.info("NOTOK: PyYAML is not available. That means that "
-                     "--config_file cannot be used. Check the documentation "
-                     "for further instructions.")
+    
     try:
         import torch
         print("Checking PyTorch.... %sOK (%s)%s"
@@ -90,56 +78,7 @@ def parse_args(parser):
         predictors.PREDICTOR_REGISTRY[args.predictor].add_args(parser)
     if args.estimator is not None:
         estimators.ESTIMATOR_REGISTRY[args.estimator].add_args(parser)
-    args = parser.parse_args()
-    if args.config_file:
-        if not YAML_AVAILABLE:
-            logging.fatal("Install PyYAML in order to use config files.")
-            return args
-        paths = args.config_file
-        delattr(args, 'config_file')
-        arg_dict = args.__dict__
-        for path in utils.split_comma(paths):
-            _load_config_file(arg_dict, path)
-    return args
-
-
-def _load_config_file(arg_dict, path):
-    with open(path.strip()) as f:
-        data = yaml.load(f, Loader=yaml.FullLoader)
-        for key, value in data.items():
-            if key == "config_file":
-                for sub_path in value.split(","):
-                    _load_config_file(arg_dict, sub_path)
-            if isinstance(value, list):
-                for v in value:
-                    arg_dict[key].append(v)
-            else:
-                arg_dict[key] = value
-
-
-def parse_param_string(param):
-    """Parses a parameter string such as 'param1=x,param2=y'. Loads 
-    config files if specified in the string. If ``param`` points to a
-    file, load this file with YAML.
-    """
-    if not param:
-        return {}
-    if os.path.isfile(param):
-        param = "config_file=%s" % param
-    config = {}
-    for pair in param.strip().split(","):
-        (k,v) = pair.split("=", 1)
-        if k == 'config_file':
-            if not YAML_AVAILABLE:
-                logging.fatal("Install PyYAML in order to use config files.")
-            else:
-                with open(v) as f:
-                    data = yaml.load(f)
-                    for config_file_key, config_file_value in data.items():
-                        config[config_file_key] = config_file_value
-        else:
-            config[k] = v
-    return config
+    return parser.parse_args()
 
 
 def get_parser():
@@ -242,14 +181,6 @@ def get_parser():
                         "posteriors. Predictor distributions can still "
                         "produce UNKs, but they have to be replaced by "
                         "other words by other predictors")
-    group.add_argument("--max_node_expansions", default=0, type=int,
-                        help="This parameter allows to limit the total number "
-                        "of search space expansions for a single sentence. "
-                        "If this is 0 we allow an unlimited number of "
-                        "expansions. If it is negative, the maximum number of "
-                        "expansions is this times the length of the source "
-                        "sentence. Supporting decoders:\n"
-                        "dfs")
     group.add_argument("--max_len_factor", default=2.0, type=float,
                         help="Limits the length of hypotheses to avoid "
                         "infinity loops in search strategies for unbounded "
@@ -269,11 +200,6 @@ def get_parser():
                         "score. DO NOT USE early stopping in combination with "
                         "the dfs or restarting decoder when your predictors "
                         "can produce positive scores!")
-    group.add_argument("--simplelendfs_lower_bounds_file", default="",
-                        help="Path to a file with length dependent lower "
-                        "lower bounds for the simplelendfs decoder. Each line "
-                        "must be in the format <len1>:<lower-bound1> ... "
-                        "<lenN>:<lower-boundN>.")
     group.add_argument("--gumbel", action='store_true',
                         help="Add gumbel RV to make beam search effectively"
                         "random sampling")
@@ -283,6 +209,8 @@ def get_parser():
                         help="Report estimates for statistics during decoding")
     group.add_argument("--estimator_iterations", default=1, type=int,
                         help="Number of times to build estimator (for reporting variance)")
+    group.add_argument("--length_norm", default=False, type='bool',
+                        help="Use length normalization when decoding")
     
 
     ## Output options
@@ -301,8 +229,6 @@ def get_parser():
                         help="Comma separated list of output formats: \n\n"
                         "* 'text': First best translations in plain text "
                         "format\n"
-                        "* 'nbest': Moses' n-best format with separate "
-                        "scores for each predictor.\n"
                         "* 'nbest_sep': nbest translations in plain text "
                         "output to individual files based off of 'output_path'\n"
                         "* 'score': writes scores of hypotheses to file; output "

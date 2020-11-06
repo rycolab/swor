@@ -26,8 +26,7 @@ import copy
 import math
 
 import utils
-from utils import Observable, Observer, MESSAGE_TYPE_DEFAULT, \
-    MESSAGE_TYPE_POSTERIOR, MESSAGE_TYPE_FULL_HYPO, NEG_INF, EPS_P
+from utils import NEG_INF, EPS_P
 import numpy as np
 from operator import mul
 import logging
@@ -171,91 +170,23 @@ class PartialHypothesis(object):
         hypo.word_to_consume = int(word)
         return hypo
 
-
-class Heuristic(Observer):
-    """A ``Heuristic`` instance can be used to estimate the future 
-    costs for a given word in a given state. See the ``heuristics``
-    module for implementations."""
     
-    def __init__(self):
-        """Creates a heuristic without predictors. """
-        super(Heuristic, self).__init__()
-        self.predictors = []
-
-    def set_predictors(self, predictors):
-        """Set the predictors used by this heuristic. 
-        
-        Args:
-            predictors (list):  Predictors and their weights to be
-                                used with this heuristic. Should be in
-                                the same form as ``Decoder.predictors``,
-                                i.e. a list of (predictor, weight)
-                                tuples
-        """
-        self.predictors = predictors
-    
-    def initialize(self, src_sentence):
-        """Initialize the heuristic with the given source sentence.
-        This is not passed through to the heuristic predictors
-        automatically but handles initialization outside the
-        predictors.
-        
-        Args:
-            src_sentence (list): List of source word ids without <S> or
-                                 </S> which make up the source sentence
-        """
-        pass
-
-    @abstractmethod
-    def estimate_future_cost(self, hypo):
-        """Estimate the future cost (i.e. negative score) given the 
-        states of the predictors set by ``set_predictors`` for a
-        partial hypothesis ``hypo``. Note that this function is not 
-        supposed to change predictor states. If (e.g. for the greedy 
-        heuristic) this is not possible, the predictor states must be
-        changed back after execution by the implementing method.
-        
-        Args:
-            hypo (PartialHypo): Hypothesis for which to estimate the
-                                future cost
-        
-        Returns:
-            float. The future cost estimate for this heuristic
-        """
-        raise NotImplementedError
-    
-    def notify(self, message, message_type = MESSAGE_TYPE_DEFAULT):
-        """This is the notification method from the ``Observer``
-        super class. We implement it with an empty method here, but
-        implementing sub classes can override this method to get
-        notifications from the decoder instance about generated
-        posterior distributions.
-        
-        Args:
-            message (object): The posterior sent by the decoder
-        """
-        pass
-    
-class Decoder(Observable):    
+class Decoder(object):    
     """A ``Decoder`` instance represents a particular search strategy
     such as A*, beam search, greedy search etc. Decisions are made 
     based on the outputs of one or many predictors, which are 
     maintained by the ``Decoder`` instance.
     
     Decoders are observable. They fire notifications after 
-    apply_predictors has been called. All heuristics
-    are observing the decoder by default.
+    apply_predictors has been called. 
     """
     
     def __init__(self, decoder_args):
-        """Initializes the decoder instance with no predictors or 
-        heuristics.
+        """Initializes the decoder instance with no predictors 
         """
         super(Decoder, self).__init__()
         self.max_len_factor = decoder_args.max_len_factor
-        self.predictor = None # Tuples (predictor, weight)
-        self.heuristics = []
-        self.predictor_names = []
+        self.predictor = None 
         self.gumbel = decoder_args.gumbel
         self.allow_unk_in_output = decoder_args.allow_unk_in_output
         self.nbest = 1 # length of n-best list
@@ -264,6 +195,7 @@ class Decoder(Observable):
         self.apply_predictor_count = 0
         self.temperature = decoder_args.temperature
         self.add_incomplete = decoder_args.add_incomplete
+        self.length_norm = decoder_args.length_norm
         self.seed=0
          # score function will be monotonic without modifications to scoring function;
          # currently, modified objectives are not implemented in this library. Can
@@ -300,52 +232,6 @@ class Decoder(Observable):
     def remove_predictor(self):
         """Removes all predictors of this decoder. """
         self.predictor = None
-
-    def set_heuristic_predictors(self, heuristic_predictors):
-        """Define the list of predictors used by heuristics. This needs
-        to be called before adding heuristics with ``add_heuristic()``
-
-        Args:
-            heuristic_predictors (list):  Predictors and their weights 
-                                          to be used with heuristics. 
-                                          Should be in the same form 
-                                          as ``Decoder.predictors``,
-                                          i.e. a list of 
-                                          (predictor, weight) tuples
-        """
-        self.heuristic_predictors = heuristic_predictors
-    
-    def add_heuristic(self, heuristic):
-        """Add a heuristic to the decoder. For future cost estimates,
-        the sum of the estimates from all heuristics added so far will
-        be used. The predictors used in this heuristic have to be set
-        before via ``set_heuristic_predictors()``
-        
-        Args:
-            heuristic (Heuristic): A heuristic to use for future cost
-                                   estimates
-        """
-        heuristic.set_predictors(self.heuristic_predictors)
-        self.add_observer(heuristic)
-        self.heuristics.append(heuristic)
-    
-    def estimate_future_cost(self, hypo):
-        """Uses all heuristics which have been added with 
-        ``add_heuristic`` to estimate the future cost for a given
-        partial hypothesis. The estimates are used in heuristic based
-        searches like A*. This function returns the future log *cost* 
-        (i.e. the lower the better), assuming that the last word in the
-        partial hypothesis ``hypo`` is consumed next.
-        
-        Args:
-            hypo (PartialHypothesis): Hypothesis for which to estimate
-                                      the future cost given the current
-                                      predictor state
-        
-        Returns
-            float. Future cost
-        """
-        return sum([h.estimate_future_cost(hypo) for h in  self.heuristics])
     
     def has_predictor(self):
         """Returns true if predictors have been added to the decoder. """
@@ -413,7 +299,6 @@ class Decoder(Observable):
                 
         assert self.allow_unk_in_output or not utils.UNK_ID in ids
         
-        self.notify_observers(posterior, message_type = MESSAGE_TYPE_POSTERIOR)
         return ids, posterior, original_posterior
 
 
@@ -426,8 +311,8 @@ class Decoder(Observable):
         gumbel_posterior = shifted_posterior + gumbels + hypo.base_score
         Z = np.max(gumbel_posterior)
 
-        v = hypo.score - gumbel_posterior + utils.logmexp(gumbel_posterior - Z, ignore_zero=True)
-        gumbel_full_posterior = hypo.score - np.maximum(0, v) - utils.logpexp(-np.abs(v), ignore_zero=True)
+        v = hypo.score - gumbel_posterior + utils.log1mexp_basic(gumbel_posterior - Z, ignore_zero=True)
+        gumbel_full_posterior = hypo.score - np.maximum(0, v) - utils.log1pexp_basic(-np.abs(v), ignore_zero=True)
 
         # make sure invalid tokens still have neg inf log probability
         gumbel_full_posterior[(posterior == utils.NEG_INF).nonzero()] == utils.NEG_INF
@@ -472,21 +357,8 @@ class Decoder(Observable):
         current_score = hypo.score
         if self.gumbel:
             return current_score
-
-        #the following are not currently being used. Can add back if there's reason
-        if getattr(self, 'reward_type', False): 
-            factor =  min(self.l, len(hypo))
-            current_score += self.reward_coef*factor
-            if self.heuristics:
-                if hypo.get_last_word() != utils.EOS_ID:
-                        potential = max(self.l - len(hypo.trgt_sentence),0) 
-                        current_score += self.reward_coef*potential
-        elif getattr(self, 'heuristic_search', False):
-            if hypo.get_last_word() != utils.EOS_ID:
-                remaining = self.max_len - len(hypo.trgt_sentence) 
-                current_score += self.lmbda*self.epsilon*remaining
-
-        elif getattr(self, 'length_norm', False): 
+        
+        elif self.length_norm: 
             current_score /= len(hypo)
 
         return current_score
@@ -528,8 +400,7 @@ class Decoder(Observable):
             
     def initialize_predictor(self, src_sentence):
         """First, increases the sentence id counter and calls
-        ``initialize()`` on all predictors. Then, ``initialize()`` is
-        called for all heuristics.
+        ``initialize()`` on all predictors. 
         
         Args:
             src_sentence (list): List of source word ids without <S> or
@@ -542,8 +413,6 @@ class Decoder(Observable):
         self.current_sen_id += 1
         self.predictor.set_current_sen_id(self.current_sen_id)
         self.predictor.initialize(src_sentence)
-        for h in self.heuristics:
-            h.initialize(src_sentence)
     
     def add_full_hypo(self, hypo):
         """Adds a new full hypothesis to ``full_hypos``. This can be
@@ -556,7 +425,6 @@ class Decoder(Observable):
         if len(self.full_hypos) == 0 or hypo.total_score > self.cur_best.total_score:
             self.cur_best = hypo
         self.full_hypos.append(hypo)
-        self.notify_observers(hypo, message_type = MESSAGE_TYPE_FULL_HYPO)
     
     def get_full_hypos_sorted(self, additional_hypos=None):
         """Returns ``full_hypos`` sorted by the total score. Can be 
@@ -643,32 +511,6 @@ class Decoder(Observable):
     def get_predictor_states(self):
         """Calls ``get_state()`` on all predictors. """
         return self.predictor.get_state()
-
-    @staticmethod
-    def _scale_combine_non_zero_scores(non_zero_word_count,
-                                       posteriors,
-                                       unk_probs,
-                                       pred_weights,
-                                       top_n=0):
-      scaled_posteriors = []
-      for posterior, unk_prob, weight in zip(
-              posteriors, unk_probs, pred_weights):
-          if isinstance(posterior, dict):
-              arr = np.full(non_zero_word_count, unk_prob)
-              for word, score in posterior.items():
-                  if word < non_zero_word_count:
-                      arr[word] = score
-              scaled_posteriors.append(arr * weight)
-          else:
-              n_unks = non_zero_word_count - len(posterior)
-              if n_unks > 0:
-                  posterior = np.concatenate((
-                      posterior, np.full(n_unks, unk_prob)))
-              elif n_unks < 0:
-                  posterior = posterior[:n_unks]
-              scaled_posteriors.append(posterior * weight)
-      combined_scores = np.sum(scaled_posteriors, axis=0)
-      return utils.argmax_n(combined_scores, top_n)
 
     
     @abstractmethod
